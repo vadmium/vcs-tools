@@ -48,7 +48,3 @@ class WeakBinding(Function):
     def __repr__(self):
         return "<{} of {} to {}>".format(
             type(self).__name__, self.func, self.ref())
-
-class Record:
-    def __init__(self, arg=dict(), **kw):
-        self.__dict__.update(arg, **kw)
