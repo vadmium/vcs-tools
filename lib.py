@@ -1,5 +1,6 @@
 import sys
 import weakref
+from os.path import basename
 
 class Function:
     def __init__(self):
@@ -48,3 +49,12 @@ class WeakBinding(Function):
     def __repr__(self):
         return "<{} of {} to {}>".format(
             type(self).__name__, self.func, self.ref())
+
+def gen_repr(gi):
+    f = gi.gi_frame
+    if f:
+        return "<{} {:#x}, {}:{}>".format(f.f_code.co_name, id(gi),
+            basename(f.f_code.co_filename), f.f_lineno)
+    else:
+        return "<{} {:#x} (inactive)>".format(gi.gi_code.co_name,
+            id(gi))
