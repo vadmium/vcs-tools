@@ -2,7 +2,7 @@ import sys
 import weakref
 from os.path import basename
 
-class Function:
+class Function(object):
     def __init__(self):
         self.__name__ = type(self).__name__
     def __get__(self, obj, cls):
@@ -27,7 +27,7 @@ class exc_sink(Function):
         except BaseException as e:
             sys.excepthook(type(e), e, e.__traceback__)
 
-class weakmethod:
+class weakmethod(object):
     """Decorator wrapper for methods that binds to objects using a weak
     reference"""
     def __init__(self, func):
