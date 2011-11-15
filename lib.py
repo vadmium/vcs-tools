@@ -58,3 +58,7 @@ def gen_repr(gi):
     else:
         return "<{} {:#x} (inactive)>".format(gi.gi_code.co_name,
             id(gi))
+
+class Record(object):
+    def __init__(self, *args, **kw):
+        self.__dict__.update(*args, **kw)
