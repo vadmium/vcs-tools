@@ -2,6 +2,7 @@ import sys
 import weakref
 from os.path import basename
 from sys import modules
+from sys import argv
 
 try:
     import builtins
@@ -77,4 +78,4 @@ def assimilate(name, fromlist):
 def run_main(module):
     if module != "__main__":
         return
-    modules[module].main()
+    modules[module].main(*argv)
