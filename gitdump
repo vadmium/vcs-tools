@@ -120,9 +120,10 @@ class Editor(object):
         self.repo = repo
         
         print("commit refs/heads/pyqt", file=self.repo.dump)
-        print("committer <{}@{}> {} +0000".format(author, repo.uuid,
-            str(timegm(strptime(date[:19], "%Y-%m-%dT%H:%M:%S")))),
-            file=self.repo.dump)
+        
+        date = timegm(strptime(date[:19], "%Y-%m-%dT%H:%M:%S"))
+        print("committer {author} <{author}@{self.repo.uuid}> {date} +0000".
+            format(**locals()), file=self.repo.dump)
         
         # Log message already terminated by one newline?!
         log = log + "\ngit-svn-id: {}@{} {}".format(repo.url, rev, repo.uuid)
