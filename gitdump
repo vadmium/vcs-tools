@@ -1,0 +1,224 @@
+#! /usr/bin/env python2
+from __future__ import print_function
+
+from subvertpy.ra import (RemoteAccess, Auth, get_username_provider)
+from subvertpy.delta import apply_txdelta_window
+from subvertpy.properties import (
+    PROP_REVISION_DATE,
+    PROP_REVISION_AUTHOR,
+    PROP_REVISION_LOG,
+)
+from sys import (stderr, argv)
+from functools import partial
+from time import strptime
+from calendar import timegm
+from io import SEEK_END
+
+def nop(*args, **kw):
+    pass
+
+class Function(object):
+    def __init__(self):
+        self.__name__ = type(self).__name__
+    def __get__(self, obj, cls):
+        if obj is None:
+            return self
+        return Binding(self, obj)
+class Binding:
+    def __init__(self, func, obj):
+        self.func = func
+        self.obj = obj
+    def __call__(self, *args, **kw):
+        return self.func(self.obj, *args, **kw)
+
+class traced(Function):
+    def __init__(self, func, abbrev=set()):
+        self.func = func
+        self.name = func.__name__
+        self.abbrev = abbrev
+    def __call__(self, *args, **kw):
+        print(self.name, end="(", file=stderr)
+        
+        for (k, v) in enumerate(args):
+            if k:
+                print(", ", end="", file=stderr)
+            if k in self.abbrev:
+                v = "..."
+            else:
+                v = repr(v)
+            print(v, end="", file=stderr)
+        
+        comma = bool(args)
+        for (k, v) in kw.items():
+            if comma:
+                print(", ", end="", file=stderr)
+            if k in self.abbrev:
+                v = "..."
+            else:
+                v = repr(v)
+            print("{}={}".format(k, v), end="", file=stderr)
+            comma = True
+        
+        print(end=") ", file=stderr)
+        stderr.flush()
+        ret = self.func(*args, **kw)
+        if "return" in self.abbrev:
+            v = "..."
+        else:
+            v = repr(ret)
+        print("->", v, file=stderr)
+        return ret
+
+def trace(func, *args, **kw):
+    return traced(func)(*args, **kw)
+
+def main(_, dump, url, end_rev):
+    end_rev = int(end_rev)
+    repo = Record(url=url, files=dict())
+    
+    with open(dump, "w+b") as repo.dump:
+        # Auth stuff avoids the following error for diffs on local (file://)
+        # URLs: "No provider registered for 'svn.username' credentials"
+        auth = Auth((trace(get_username_provider),))
+        
+        ra = trace(RemoteAccess, url, auth=auth)
+        
+        repo.uuid=trace(ra.get_uuid)
+        
+        log_iter = trace(ra.iter_log, paths=None, start=0, end=end_rev,
+            strict_node_history=False, discover_changed_paths=False)
+        
+        log = list()
+        stderr.write("r0/{}\n".format(end_rev))
+        stderr.flush()
+        for entry in log_iter:
+            # TODO: limit paths saved to conserve memory
+            log.append(entry)
+            (_, rev, _, _) = entry
+            stderr.write("r{}/{}\n".format(rev, end_rev))
+        print(file=stderr)
+        
+        prev = None
+        for entry in log:
+            (_, rev, props, _) = entry
+            reporter = trace(ra.do_diff, rev, "", url, Editor(repo, rev,
+                date=props[PROP_REVISION_DATE],
+                author=props[PROP_REVISION_AUTHOR],
+                log=props[PROP_REVISION_LOG]), True, True, True)
+            
+            if prev is None:
+                trace(reporter.set_path, "", rev, True)
+            else:
+                # TODO: include sources of nodes marked as copies in the log
+                trace(reporter.set_path, "", prev, False)
+            
+            trace(reporter.finish)
+            prev = rev
+
+class Editor(object):
+    def __init__(self, repo, rev, date, author, log):
+        self.repo = repo
+        
+        print("commit refs/heads/pyqt", file=self.repo.dump)
+        print("committer <{}@{}> {} +0000".format(author, repo.uuid,
+            str(timegm(strptime(date[:19], "%Y-%m-%dT%H:%M:%S")))),
+            file=self.repo.dump)
+        
+        # Log message already terminated by one newline?!
+        log = log + "\ngit-svn-id: {}@{} {}".format(repo.url, rev, repo.uuid)
+        print("data", len(log), file=self.repo.dump)
+        self.repo.dump.write(log)
+        print(file=self.repo.dump)
+    
+    set_target_revision = nop
+    @traced
+    def open_root(self, base):
+        return DirEditor(self.repo)
+    
+    def close(self):
+        print(file=self.repo.dump)
+
+class NodeEditor(object):
+    def __init__(self, repo):
+        self.repo = repo
+    change_prop = nop
+    close = nop
+class DirEditor(NodeEditor):
+    def add_directory(self, path):
+        return DirEditor(self.repo)
+    @traced
+    def open_directory(self, path, base):
+        return DirEditor(self.repo)
+    @traced
+    def add_file(self, path):
+        return FileEditor(path, self.repo)
+    @traced
+    def open_file(self, path, base):
+        return FileEditor(path, self.repo)
+    @traced
+    def delete_entry(self, path, rev):
+        print("D", path, file=self.repo.dump)
+
+class FileEditor(NodeEditor):
+    def __init__(self, path, *args, **kw):
+        NodeEditor.__init__(self, *args, **kw)
+        self.path = path
+        
+        try:
+            self.sbuf = self.repo.files[path]
+        except LookupError:
+            self.sbuf = bytes()
+    
+    def apply_textdelta(self, base_sum):
+        return DeltaWindowHandler(self)
+
+class DeltaWindowHandler(object):
+    def __init__(self, editor):
+        self.editor = editor
+        self.target_chunks = list()
+        self.target_len = 0
+    
+    def __call__(self, chunk):
+        if chunk is None:
+            self.editor.repo.dump.seek(0, SEEK_END)
+            
+            print("M 644 inline", self.editor.path,
+                file=self.editor.repo.dump)
+            print("data", self.target_len, file=self.editor.repo.dump)
+            
+            self.editor.repo.files[self.editor.path] = FileArray(
+                self.editor.repo.dump, self.editor.repo.dump.tell(),
+                self.target_len)
+            for chunk in self.target_chunks:
+                self.editor.repo.dump.write(chunk)
+            
+            print(file=self.editor.repo.dump)
+        
+        else:
+            chunk = apply_txdelta_window(self.editor.sbuf, chunk)
+            self.target_chunks.append(chunk)
+            self.target_len += len(chunk)
+
+class FileArray(object):
+    def __init__(self, file, pos, len):
+        self.file = file
+        self.pos = pos
+        self.len = len
+    @traced
+    def __getitem__(self, slice):
+        return FileArray(self.file,
+            self.pos + slice.start, slice.stop - slice.start)
+    @partial(traced, abbrev={1, "return"})
+    def __radd__(self, str):
+        self.file.seek(self.pos)
+        return str + self.file.read(self.len)
+    def __repr__(self):
+        return "{}({}, {}, {})".format(type(self).__name__,
+            self.file, self.pos, self.len)
+
+class Record(object):
+    def __init__(self, *args, **kw):
+        self.__dict__.update(*args, **kw)
+
+if __name__ == "__main__":
+    main(*argv)
