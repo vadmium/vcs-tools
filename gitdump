@@ -89,10 +89,10 @@ def main(_, dump, url, end_rev):
         
         ra = trace(RemoteAccess, url, auth=auth)
         
-        repos_root = trace(ra.get_repos_root)
+        repos_root = ra.get_repos_root()
         branch = url[len(repos_root):]
         
-        repo.uuid = trace(ra.get_uuid)
+        repo.uuid = ra.get_uuid()
         
         log_iter = ra.iter_log(paths=None, start=end_rev, end=1,
             strict_node_history=False, discover_changed_paths=True)
@@ -147,7 +147,7 @@ def main(_, dump, url, end_rev):
             
             reporter = trace(ra.do_diff, entry.rev, "", url, RevEditor(repo),
                 True, True, True)
-            trace(reporter.set_path, "", prev, False)
+            reporter.set_path("", prev, False)
             trace(reporter.finish)
             # Assume the editor calls are all completed now
             
@@ -168,7 +168,7 @@ class RevEditor(Editor):
     abort = Tracer("abort")
 
 class NodeEditor(Editor):
-    change_prop = Tracer("change_prop")
+    change_prop = nop
 class DirEditor(NodeEditor):
     @traced
     def add_directory(self, path):
@@ -192,7 +192,6 @@ class FileEditor(NodeEditor):
         self.path = path
         self.sbuf = sbuf
     
-    @traced
     def apply_textdelta(self, base_sum):
         return DeltaWindowHandler(self)
 
@@ -202,7 +201,7 @@ class DeltaWindowHandler(object):
         self.target_chunks = list()
         self.target_len = 0
     
-    @partial(traced, abbrev={1})
+    #~ @partial(traced, abbrev={1})
     def __call__(self, chunk):
         if chunk is None:
             self.editor.repo.dump.seek(0, SEEK_END)
