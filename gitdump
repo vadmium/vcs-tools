@@ -78,7 +78,7 @@ def trace(func, *args, **kw):
 def Tracer(name):
     return traced(nop, name=name)
 
-def main(_, dump, url, end_rev):
+def main(_, dump, git_branch, url, end_rev):
     end_rev = int(end_rev)
     repo = Record(files=dict())
     
@@ -140,7 +140,7 @@ def main(_, dump, url, end_rev):
             if entry.new_branch is not None:
                 url = repos_root + entry.new_branch
             
-            print("commit refs/heads/pyqt", file=repo.dump)
+            print("commit refs/heads/{}".format(git_branch), file=repo.dump)
             
             date = timegm(strptime(entry.date[:19], "%Y-%m-%dT%H:%M:%S"))
             print("committer {entry.author} <{entry.author}@{repo.uuid}> "
