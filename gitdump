@@ -111,8 +111,9 @@ def main(_, dump, url, end_rev):
                 format(**locals()), file=repo.dump)
             
             log = props[PROP_REVISION_LOG]
-            # Log message already terminated by one newline?!
-            log = "{}\ngit-svn-id: {}@{} {}".format(log, url, rev, repo.uuid)
+            # TODO: svn+uuid://{repo.uuid}/{root} option: more static
+            log = "{}\n\ngit-svn-id: {}@{} {}\n".format(
+                log, url, rev, repo.uuid)
             print("data", len(log), file=repo.dump)
             repo.dump.write(log)
             print(file=repo.dump)
@@ -123,7 +124,6 @@ def main(_, dump, url, end_rev):
             if prev is None:
                 trace(reporter.set_path, "", rev, True)
             else:
-                # TODO: include sources of nodes marked as copies in the log
                 trace(reporter.set_path, "", prev, False)
             
             trace(reporter.finish)
