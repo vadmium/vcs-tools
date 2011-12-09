@@ -89,56 +89,73 @@ def main(_, dump, url, end_rev):
         
         ra = trace(RemoteAccess, url, auth=auth)
         
-        repo.uuid=trace(ra.get_uuid)
+        repos_root = trace(ra.get_repos_root)
+        branch = url[len(repos_root):]
         
-        log_iter = ra.iter_log(paths=None, start=0, end=end_rev,
-            strict_node_history=False, discover_changed_paths=False)
+        repo.uuid = trace(ra.get_uuid)
         
+        log_iter = ra.iter_log(paths=None, start=end_rev, end=1,
+            strict_node_history=False, discover_changed_paths=True)
+        
+        # TODO: use "get_location_segments" instead
         log = list()
-        stderr.write("r0/{}".format(end_rev))
-        stderr.flush()
-        for entry in log_iter:
-            # TODO: limit paths saved to conserve memory
-            log.append(entry)
-            (_, rev, _, _) = entry
-            stderr.write("\rr{}/{}".format(rev, end_rev))
+        while True:
+            stderr.write("revision ")
             stderr.flush()
-        print(file=stderr)
+            try:
+                (paths, rev, props, _) = next(log_iter)
+            except StopIteration:
+                print("(stopped)", file=stderr)
+                break
+            
+            try:
+                (_, src, _, _) = paths[branch]
+            except LookupError:
+                new = None
+                print(rev, file=stderr)
+            else:
+                new = branch
+                branch = src
+                print("{}: beginning of {}".format(rev, new), file=stderr)
+            
+            log.append(Record(
+                rev=rev,
+                date=props[PROP_REVISION_DATE],
+                author=props[PROP_REVISION_AUTHOR],
+                log = props[PROP_REVISION_LOG],
+                new_branch=new,
+            ))
         
-        prev = None
-        for entry in log:
-            (_, rev, props, _) = entry
+        prev = 0
+        trace(ra.reparent, repos_root)
+        for entry in reversed(log):
+            if entry.new_branch is not None:
+                url = repos_root + entry.new_branch
             
             print("commit refs/heads/pyqt", file=repo.dump)
             
-            date = props[PROP_REVISION_DATE]
-            date = timegm(strptime(date[:19], "%Y-%m-%dT%H:%M:%S"))
-            author = props[PROP_REVISION_AUTHOR]
-            print("committer {author} <{author}@{repo.uuid}> {date} +0000".
-                format(**locals()), file=repo.dump)
+            date = timegm(strptime(entry.date[:19], "%Y-%m-%dT%H:%M:%S"))
+            print("committer {entry.author} <{entry.author}@{repo.uuid}> "
+                "{date} +0000".format(**locals()), file=repo.dump)
             
-            log = props[PROP_REVISION_LOG]
             # TODO: svn+uuid://{repo.uuid}/{root} option: more static
             log = "{}\n\ngit-svn-id: {}@{} {}\n".format(
-                log, url, rev, repo.uuid)
+                entry.log, url, entry.rev, repo.uuid)
             print("data", len(log), file=repo.dump)
             repo.dump.write(log)
             print(file=repo.dump)
             
-            reporter = trace(ra.do_diff, rev, "", url, RevEditor(repo), True,
-                True, True)
-            
-            if prev is None:
-                trace(reporter.set_path, "", rev, True)
-            else:
-                trace(reporter.set_path, "", prev, False)
-            
+            reporter = trace(ra.do_diff, entry.rev, "", url, RevEditor(repo),
+                True, True, True)
+            trace(reporter.set_path, "", prev, False)
             trace(reporter.finish)
             # Assume the editor calls are all completed now
             
             print(file=repo.dump)
             
-            prev = rev
+            prev = entry.rev
+            if entry.new_branch is not None:
+                trace(ra.reparent, url)
 
 class Editor(object):
     def __init__(self, repo):
