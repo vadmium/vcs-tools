@@ -117,6 +117,14 @@ def main(_, dump, url, end_rev):
                 new = branch
                 branch = src
                 print("{}: beginning of {}".format(rev, new), file=stderr)
+                
+                if branch is not None:
+                    prefix = branch + "/"
+                    if not any(path.startswith(prefix)
+                    for path in paths.keys()):
+                        if log and log[-1].new_branch is None:
+                            log[-1].new_branch = new
+                        continue
             
             log.append(Record(
                 rev=rev,
