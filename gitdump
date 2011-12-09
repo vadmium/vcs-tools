@@ -81,6 +81,7 @@ def Tracer(name):
 def main(_, dump, git_branch, url, end_rev):
     end_rev = int(end_rev)
     repo = Record(files=dict())
+    uuid_url = True
     
     with open(dump, "w+b") as repo.dump:
         # Auth stuff avoids the following error for diffs on local (file://)
@@ -146,9 +147,12 @@ def main(_, dump, git_branch, url, end_rev):
             print("committer {entry.author} <{entry.author}@{repo.uuid}> "
                 "{date} +0000".format(**locals()), file=repo.dump)
             
-            # TODO: svn+uuid://{repo.uuid}/{root} option: more static
-            log = "{}\n\ngit-svn-id: {}@{} {}\n".format(
-                entry.log, url, entry.rev, repo.uuid)
+            if uuid_url:
+                log = "{}\n\ngit-svn-id: svn+uuid://{}{}@{}\n".format(
+                    entry.log, repo.uuid, url[len(repos_root):], entry.rev)
+            else:
+                log = "{}\n\ngit-svn-id: {}@{} {}\n".format(
+                    entry.log, url, entry.rev, repo.uuid)
             print("data", len(log), file=repo.dump)
             repo.dump.write(log)
             print(file=repo.dump)
