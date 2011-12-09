@@ -32,10 +32,14 @@ class Binding:
         return self.func(self.obj, *args, **kw)
 
 class traced(Function):
-    def __init__(self, func, abbrev=set()):
+    def __init__(self, func, name=None, abbrev=set()):
         self.func = func
-        self.name = func.__name__
+        self.name = name
         self.abbrev = abbrev
+        
+        if self.name is None:
+            self.name = func.__name__
+    
     def __call__(self, *args, **kw):
         print(self.name, end="(", file=stderr)
         
@@ -71,6 +75,8 @@ class traced(Function):
 
 def trace(func, *args, **kw):
     return traced(func)(*args, **kw)
+def Tracer(name):
+    return traced(nop, name=name)
 
 def main(_, dump, url, end_rev):
     end_rev = int(end_rev)
@@ -118,8 +124,8 @@ def main(_, dump, url, end_rev):
             repo.dump.write(log)
             print(file=repo.dump)
             
-            reporter = trace(ra.do_diff, rev, "", url, RootEditor(repo),
-                True, True, True)
+            reporter = trace(ra.do_diff, rev, "", url, RevEditor(repo), True,
+                True, True)
             
             if prev is None:
                 trace(reporter.set_path, "", rev, True)
@@ -136,41 +142,39 @@ def main(_, dump, url, end_rev):
 class Editor(object):
     def __init__(self, repo):
         self.repo = repo
-    close = nop
-class RootEditor(Editor):
-    set_target_revision = nop
+    close = Tracer("close")
+class RevEditor(Editor):
+    set_target_revision = Tracer("set_target_revision")
     @traced
     def open_root(self, base):
         return DirEditor(self.repo)
 
 class NodeEditor(Editor):
-    change_prop = nop
+    change_prop = Tracer("change_prop")
 class DirEditor(NodeEditor):
+    @traced
     def add_directory(self, path):
-        return DirEditor(self.repo)
+        return self
     @traced
     def open_directory(self, path, base):
-        return DirEditor(self.repo)
+        return self
     @traced
     def add_file(self, path):
-        return FileEditor(path, self.repo)
+        return FileEditor(path, bytes(), self.repo)
     @traced
     def open_file(self, path, base):
-        return FileEditor(path, self.repo)
+        return FileEditor(path, self.repo.files[path], self.repo)
     @traced
     def delete_entry(self, path, rev):
         print("D", path, file=self.repo.dump)
 
 class FileEditor(NodeEditor):
-    def __init__(self, path, *args, **kw):
+    def __init__(self, path, sbuf, *args, **kw):
         NodeEditor.__init__(self, *args, **kw)
         self.path = path
-        
-        try:
-            self.sbuf = self.repo.files[path]
-        except LookupError:
-            self.sbuf = bytes()
+        self.sbuf = sbuf
     
+    @traced
     def apply_textdelta(self, base_sum):
         return DeltaWindowHandler(self)
 
@@ -180,6 +184,7 @@ class DeltaWindowHandler(object):
         self.target_chunks = list()
         self.target_len = 0
     
+    @partial(traced, abbrev={1})
     def __call__(self, chunk):
         if chunk is None:
             self.editor.repo.dump.seek(0, SEEK_END)
@@ -206,11 +211,11 @@ class FileArray(object):
         self.file = file
         self.pos = pos
         self.len = len
-    @traced
+    #~ @traced
     def __getitem__(self, slice):
         return FileArray(self.file,
             self.pos + slice.start, slice.stop - slice.start)
-    @partial(traced, abbrev={1, "return"})
+    #~ @partial(traced, abbrev={1, "return"})
     def __radd__(self, str):
         self.file.seek(self.pos)
         return str + self.file.read(self.len)
