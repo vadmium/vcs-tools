@@ -85,23 +85,24 @@ def main(_, dump, url, end_rev):
     with open(dump, "w+b") as repo.dump:
         # Auth stuff avoids the following error for diffs on local (file://)
         # URLs: "No provider registered for 'svn.username' credentials"
-        auth = Auth((trace(get_username_provider),))
+        auth = Auth((get_username_provider(),))
         
         ra = trace(RemoteAccess, url, auth=auth)
         
         repo.uuid=trace(ra.get_uuid)
         
-        log_iter = trace(ra.iter_log, paths=None, start=0, end=end_rev,
+        log_iter = ra.iter_log(paths=None, start=0, end=end_rev,
             strict_node_history=False, discover_changed_paths=False)
         
         log = list()
-        stderr.write("r0/{}\n".format(end_rev))
+        stderr.write("r0/{}".format(end_rev))
         stderr.flush()
         for entry in log_iter:
             # TODO: limit paths saved to conserve memory
             log.append(entry)
             (_, rev, _, _) = entry
-            stderr.write("r{}/{}\n".format(rev, end_rev))
+            stderr.write("\rr{}/{}".format(rev, end_rev))
+            stderr.flush()
         print(file=stderr)
         
         prev = None
@@ -142,12 +143,12 @@ def main(_, dump, url, end_rev):
 class Editor(object):
     def __init__(self, repo):
         self.repo = repo
-    close = Tracer("close")
+    close = nop
 class RevEditor(Editor):
-    set_target_revision = Tracer("set_target_revision")
-    @traced
+    set_target_revision = nop
     def open_root(self, base):
         return DirEditor(self.repo)
+    abort = Tracer("abort")
 
 class NodeEditor(Editor):
     change_prop = Tracer("change_prop")
@@ -211,7 +212,6 @@ class FileArray(object):
         self.file = file
         self.pos = pos
         self.len = len
-    #~ @traced
     def __getitem__(self, slice):
         return FileArray(self.file,
             self.pos + slice.start, slice.stop - slice.start)
