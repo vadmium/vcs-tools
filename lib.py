@@ -78,4 +78,4 @@ def assimilate(name, fromlist):
 def run_main(module):
     if module != "__main__":
         return
-    modules[module].main(*argv)
+    modules[module].main(*argv[1:])
