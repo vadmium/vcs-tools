@@ -78,4 +78,21 @@ def assimilate(name, fromlist):
 def run_main(module):
     if module != "__main__":
         return
-    modules[module].main(*argv[1:])
+    
+    args = list()
+    opts = dict()
+    cmd_args = iter(argv[1:])
+    while True:
+        try:
+            arg = next(cmd_args)
+        except StopIteration:
+            break
+        if arg == "--":
+            args.extend(cmd_args)
+            break
+        if arg.startswith("-"):
+            opts[arg[len("-"):]] = next(cmd_args)
+        else:
+            args.append(arg)
+    
+    modules[module].main(*args, **opts)
