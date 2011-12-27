@@ -62,3 +62,8 @@ def gen_repr(gi):
 class Record(object):
     def __init__(self, *args, **kw):
         self.__dict__.update(*args, **kw)
+
+def assimilate(name, fromlist):
+    module = __import__(name, fromlist=fromlist)
+    for name in fromlist:
+        setattr(__builtins__, name, getattr(module, name))
