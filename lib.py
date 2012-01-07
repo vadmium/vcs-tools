@@ -47,7 +47,7 @@ class WeakBinding(Function):
                 format(self.func))
         return self.func.__get__(obj, type(obj))(*args, **kw)
     def __repr__(self):
-        return "<{} of {} to {}>".format(
+        return "<{0} of {1} to {2}>".format(
             type(self).__name__, self.func, self.ref())
 
 def gen_repr(gi):
