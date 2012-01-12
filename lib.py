@@ -1,6 +1,7 @@
 import sys
 import weakref
 from os.path import basename
+import builtins
 
 class Function(object):
     def __init__(self):
@@ -66,4 +67,4 @@ class Record(object):
 def assimilate(name, fromlist):
     module = __import__(name, fromlist=fromlist)
     for name in fromlist:
-        setattr(__builtins__, name, getattr(module, name))
+        setattr(builtins, name, getattr(module, name))
