@@ -78,8 +78,12 @@ def trace(func, *args, **kw):
 def Tracer(name):
     return traced(nop, name=name)
 
-def main(_, dump, git_branch, url, end_rev):
-    end_rev = int(end_rev)
+def main(_, dump, git_branch, url, end_rev=None):
+    if end_rev is None:
+        end_rev = INVALID_REVNUM
+    else:
+        end_rev = int(end_rev)
+    
     repo = Record(files=dict())
     uuid_url = True
     
@@ -250,6 +254,8 @@ class FileArray(object):
     def __repr__(self):
         return "{}({}, {}, {})".format(type(self).__name__,
             self.file, self.pos, self.len)
+
+INVALID_REVNUM = -1
 
 class Record(object):
     def __init__(self, *args, **kw):
