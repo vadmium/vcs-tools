@@ -156,8 +156,8 @@ def main(dump, git_branch, url, end_rev=None, authors=None):
                 file=repo.dump)
             
             if uuid_url:
-                log = "{}\n\ngit-svn-id: svn+uuid://{}{}@{}\n".format(
-                    entry.log, repo.uuid, url[len(repos_root):], entry.rev)
+                log = "{}\n\ngit-svn-id: {}@{} {}\n".format(
+                    entry.log, url[len(repos_root):], entry.rev, repo.uuid)
             else:
                 log = "{}\n\ngit-svn-id: {}@{} {}\n".format(
                     entry.log, url, entry.rev, repo.uuid)
