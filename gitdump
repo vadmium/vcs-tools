@@ -13,23 +13,11 @@ from functools import partial
 from time import strptime
 from calendar import timegm
 from io import SEEK_END
+from lib import Function
+from lib import Record
 
 def nop(*args, **kw):
     pass
-
-class Function(object):
-    def __init__(self):
-        self.__name__ = type(self).__name__
-    def __get__(self, obj, cls):
-        if obj is None:
-            return self
-        return Binding(self, obj)
-class Binding:
-    def __init__(self, func, obj):
-        self.func = func
-        self.obj = obj
-    def __call__(self, *args, **kw):
-        return self.func(self.obj, *args, **kw)
 
 class traced(Function):
     def __init__(self, func, name=None, abbrev=set()):
@@ -256,10 +244,6 @@ class FileArray(object):
             self.file, self.pos, self.len)
 
 INVALID_REVNUM = -1
-
-class Record(object):
-    def __init__(self, *args, **kw):
-        self.__dict__.update(*args, **kw)
 
 from lib import run_main
 run_main(__name__)
