@@ -66,11 +66,20 @@ def trace(func, *args, **kw):
 def Tracer(name):
     return traced(nop, name=name)
 
-def main(dump, git_branch, url, end_rev=None):
+def main(dump, git_branch, url, end_rev=None, authors=None):
     if end_rev is None:
         end_rev = INVALID_REVNUM
     else:
         end_rev = int(end_rev)
+    
+    if authors is not None:
+        author_map = dict()
+        with open(authors, "rt") as file:
+            for line in file:
+                if line.endswith("\n"):
+                    line = line[:-1]
+                (svn, git) = line.split(" = ", 1)
+                author_map[svn] = git
     
     repo = Record(files=dict())
     uuid_url = True
@@ -136,8 +145,15 @@ def main(dump, git_branch, url, end_rev=None):
             print("commit refs/heads/{}".format(git_branch), file=repo.dump)
             
             date = timegm(strptime(entry.date[:19], "%Y-%m-%dT%H:%M:%S"))
-            print("committer {entry.author} <{entry.author}@{repo.uuid}> "
-                "{date} +0000".format(**locals()), file=repo.dump)
+            
+            if authors is None:
+                author = ("{entry.author} <{entry.author}@{repo.uuid}>".
+                    format(**locals()))
+            else:
+                author = author_map[entry.author]
+            
+            print("committer {author} {date} +0000".format(**locals()),
+                file=repo.dump)
             
             if uuid_url:
                 log = "{}\n\ngit-svn-id: svn+uuid://{}{}@{}\n".format(
