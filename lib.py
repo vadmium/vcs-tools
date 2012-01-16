@@ -1,6 +1,7 @@
 import sys
 import weakref
 from os.path import basename
+from sys import modules
 
 try:
     import builtins
@@ -72,3 +73,8 @@ def assimilate(name, fromlist):
     module = __import__(name, fromlist=fromlist)
     for name in fromlist:
         setattr(builtins, name, getattr(module, name))
+
+def run_main(module):
+    if module != "__main__":
+        return
+    modules[module].main()
