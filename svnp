@@ -1,0 +1,5 @@
+#! /bin/sh -eu
+set -o errexit -o nounset
+
+svn log -v "$@"
+svn diff -x -p "$@"
