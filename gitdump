@@ -78,7 +78,7 @@ def trace(func, *args, **kw):
 def Tracer(name):
     return traced(nop, name=name)
 
-def main(_, dump, git_branch, url, end_rev=None):
+def main(dump, git_branch, url, end_rev=None):
     if end_rev is None:
         end_rev = INVALID_REVNUM
     else:
@@ -261,5 +261,5 @@ class Record(object):
     def __init__(self, *args, **kw):
         self.__dict__.update(*args, **kw)
 
-if __name__ == "__main__":
-    main(*argv)
+from lib import run_main
+run_main(__name__)
