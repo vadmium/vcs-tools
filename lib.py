@@ -1,7 +1,11 @@
 import sys
 import weakref
 from os.path import basename
-import builtins
+
+try:
+    import builtins
+except ImportError:
+    import __builtin__ as builtins
 
 class Function(object):
     def __init__(self):
