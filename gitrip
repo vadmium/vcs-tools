@@ -1,0 +1,204 @@
+#! /usr/bin/env python3
+
+"""Rescue commits available from "gitweb" site"""
+
+from urllib.request import urlopen
+from html.parser import HTMLParser
+from subprocess import (check_call, Popen, check_output, CalledProcessError)
+from os import environ
+import subprocess
+from lib import Record
+from urllib.parse import (urlsplit, parse_qs, urlencode, urlunsplit, urljoin)
+from email import message_from_bytes
+from email.utils import parsedate_tz
+from calendar import timegm
+from io import BytesIO
+
+def main(url):
+    (commit,) = parse_qs(urlsplit(url).query)["h"]
+    pending = list()
+    
+    while True:
+        pending.append(scrape_commit(url, commit))
+        command = ("git", "checkout", "-q", pending[-1].parents[0])
+        try:
+            check_call(command, bufsize=-1)
+        except CalledProcessError:
+            (commit,) = pending[-1].parents
+            continue
+        else:
+            break
+    
+    for commit in reversed(pending):
+        env = dict(environ,
+            GIT_COMMITTER_NAME=commit.name,
+            GIT_COMMITTER_EMAIL=commit.email,
+            GIT_COMMITTER_DATE=commit.date,
+        )
+        if len(commit.parents) > 1:
+            commit_merge(url, commit, env)
+        else:
+            commit_normal(url, commit.hash, env)
+        
+        if commit.hash != git_head_hash():
+            generated = git_head_hash()
+            raise ValueError("Generated hash is {generated} instead of "
+                "{commit.hash}".format_map(locals()))
+
+def scrape_commit(url, commit):
+    url = gitweb_download(url, (("a", "commit"), ("h", commit)))
+    parser = CommitParser()
+    parser.feed(url.decode())
+    
+    (date, offset) = parser.committer_date.rsplit(" (", 1)
+    date = parsedate_tz(date)
+    date = timegm(date[:9]) + date[9]
+    (offset, _) = offset.split(")")
+    (_, offset) = offset.rsplit(" ", 1)
+    
+    return Record(
+        hash=parser.commit,
+        parents=parser.parents,
+        name=parser.committer_name,
+        email=parser.committer_email,
+        date="{date} {offset}".format_map(locals()),
+    )
+
+class CommitParser(HTMLParser):
+    def reset(self):
+        self.parents = list()
+        
+        self.column = None
+        self.in_a = False
+        self.committer_count = 0
+        return HTMLParser.reset(self)
+    
+    def handle_starttag(self, tag, attrs):
+        if tag == "tr":
+            self.column = 0
+        if tag == "td" and self.column == 1 and self.tr == "committer":
+            self.committer_count = 0
+            self.committer_date = str()
+        if tag == "a":
+            self.in_a = True
+        return HTMLParser.handle_starttag(self, tag, attrs)
+    
+    def handle_endtag(self, tag):
+        if tag == "tr":
+            self.column = None
+        if tag == "td":
+            self.column += 1
+        if tag == "a":
+            self.committer_count += 1
+            self.in_a = False
+        return HTMLParser.handle_endtag(self, tag)
+    
+    def handle_data(self, data):
+        if self.column == 0:
+            self.tr = data
+        if self.column == 1:
+            if self.tr == "parent":
+                self.parents.append(data)
+            if self.tr == "commit":
+                self.commit = data
+            if self.tr == "committer":
+                if self.in_a:
+                    if self.committer_count == 0:
+                        self.committer_name = data
+                    if self.committer_count == 1:
+                        self.committer_email = data
+                else:
+                    self.committer_date += data
+        return HTMLParser.handle_data(self, data)
+
+def commit_normal(url, hash, env):
+    patch = gitweb_download(url, (("a", "patch"), ("h", hash)))
+    patch = double_decode(patch)
+    
+    command = "git am --keep-cr --whitespace=nowarn"
+    check_input(command.split(), bufsize=-1, input=patch, env=env)
+    
+    if hash != git_head_hash():
+        # Commit message was mangled if second line is not blank
+        (message,) = message_from_bytes(patch).get_all("subject")
+        message = message[len("[PATCH] "):].replace("\n ", "\n").encode()
+        command = "git commit --amend --file=- --quiet"
+        check_input(command.split(), bufsize=-1, input=message, env=env)
+
+def commit_merge(url, commit, env):
+    with open(".git/MERGE_HEAD", "w") as file:
+        for parent in commit.parents[1:]:
+            file.write(parent)
+            file.write("\n")
+    
+    patch = gitweb_download(url, (("a", "commitdiff_plain"),
+        ("h", commit.hash), ("hp", commit.parents[0])))
+    patch = double_decode(patch)
+    (message, patch) = patch.split(b"\n---\n", 1)
+    (_, message) = message.split(b"\n\n", 1)
+    
+    binaries = patch.split(b"\nBinary files a/")
+    patch = list()
+    for i in range(len(binaries) - 1):
+        lines = binaries[i].rsplit(b"\n", 3)
+        if len(lines) > 3:
+            patch.append(lines[0])
+        file = lines[-3]
+        file = file[(len(b"diff --git a/ b/") - len(file)) // 2:]
+        binaries[i + 1] = binaries[i + 1][
+            len(file) + len(b" and /dev/null differ\n"):]
+        
+        command = ("git", "rm", file)
+        check_call(command)
+    patch.append(binaries[-1])
+    patch = b"\n".join(patch)
+    
+    command = "git apply --index --whitespace=nowarn"
+    check_input(command.split(), bufsize=-1, input=patch)
+    
+    command = ("git", "commit", "--file=-",
+        "--author={commit.name} <{commit.email}>".format_map(locals()),
+        "--date={commit.date}".format_map(locals()),
+    )
+    check_input(command, bufsize=-1, input=message, env=env)
+
+def gitweb_download(url, query):
+    disp_url = urlunsplit(("", "", "", urlencode(query), ""))
+    (project,) = parse_qs(urlsplit(url).query)["p"]
+    
+    # "gitweb" fails if slash is encoded in project name
+    query = urlencode((("p", project),) + query, safe="/")
+    
+    url = urljoin(url, urlunsplit(("", "", "", query, "")))
+    print("GET", disp_url, end="\r")
+    with urlopen(url) as file:
+        data = BytesIO()
+        size = 0
+        while True:
+            print(disp_url, size // 1000, "KB", end="\r")
+            chunk = file.read(0x10000)
+            if not chunk:
+                break
+            data.write(chunk)
+            size += len(chunk)
+        print()
+        return data.getvalue()
+
+def double_decode(patch):    
+    """Compensate for double UTF-8 encoding"""
+    return bytes(patch.decode(), "latin-1")
+
+def git_head_hash():
+    hash = check_output("git rev-parse HEAD".split(), bufsize=-1)
+    return hash.strip().decode()
+
+def check_input(*args, **kw):
+    input = kw.pop("input")
+    with Popen(*args, stdin=subprocess.PIPE, **kw) as proc:
+        proc.communicate(input)
+    if proc.returncode:
+        raise EnvironmentError("Process failed "
+            "with exit status {proc.returncode}".format_map(locals()))
+
+from lib import run_main
+run_main(__name__)
