@@ -14,15 +14,14 @@ from time import strptime
 from calendar import timegm
 from io import SEEK_END
 from lib import Record
+from lib import fields
 from lib import nop
 from lib.ftrace import (traced, trace, Tracer)
 
-def main(dump, git_branch, url, end_rev=None, authors=None):
-    if end_rev is None:
-        end_rev = INVALID_REVNUM
-    else:
-        end_rev = int(end_rev)
-    
+INVALID_REVNUM = -1
+
+@fields(arg_types=dict(end_rev=int))
+def main(dump, git_ref, url, end_rev=INVALID_REVNUM, authors=None):
     if authors is not None:
         author_map = dict()
         with open(authors, "rt") as file:
@@ -211,8 +210,6 @@ class FileArray(object):
     def __repr__(self):
         return "{}({}, {}, {})".format(type(self).__name__,
             self.file, self.pos, self.len)
-
-INVALID_REVNUM = -1
 
 from lib import run_main
 run_main(__name__)
