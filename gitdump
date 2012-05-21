@@ -93,7 +93,7 @@ def main(dump, git_branch, url, end_rev=None, authors=None):
             if entry.new_branch is not None:
                 url = repos_root + entry.new_branch
             
-            print("commit refs/heads/{}".format(git_branch), file=repo.dump)
+            print("commit refs/{}".format(git_ref), file=repo.dump)
             
             date = timegm(strptime(entry.date[:19], "%Y-%m-%dT%H:%M:%S"))
             
