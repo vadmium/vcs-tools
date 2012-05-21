@@ -87,9 +87,13 @@ def main(dump, git_branch, url, end_rev=None, authors=None):
                 new_branch=new,
             ))
         
-        prev = 0
-        trace(ra.reparent, repos_root)
+        prev = Record(rev=0, new_branch="")
+        url = repos_root
+        
         for entry in reversed(log):
+            if prev.new_branch is not None:
+                trace(ra.reparent, url)
+            
             if entry.new_branch is not None:
                 url = repos_root + entry.new_branch
             
@@ -118,15 +122,13 @@ def main(dump, git_branch, url, end_rev=None, authors=None):
             
             reporter = trace(ra.do_diff, entry.rev, "", url, RevEditor(repo),
                 True, True, True)
-            reporter.set_path("", prev, False)
+            reporter.set_path("", prev.rev, False)
             trace(reporter.finish)
             # Assume the editor calls are all completed now
             
             print(file=repo.dump)
             
-            prev = entry.rev
-            if entry.new_branch is not None:
-                trace(ra.reparent, url)
+            prev = entry
 
 class Editor(object):
     def __init__(self, repo):
