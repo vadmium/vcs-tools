@@ -20,8 +20,9 @@ from lib.ftrace import (traced, trace, Tracer)
 
 INVALID_REVNUM = -1
 
-@fields(arg_types=dict(end_rev=int))
-def main(dump, git_ref, url, end_rev=INVALID_REVNUM, authors=None):
+@fields(arg_types=dict(end_rev=int, base_rev=int))
+def main(dump, git_ref, url,
+end_rev=INVALID_REVNUM, base_rev=0, authors=None):
     if authors is not None:
         author_map = dict()
         with open(authors, "rt") as file:
@@ -46,7 +47,7 @@ def main(dump, git_ref, url, end_rev=INVALID_REVNUM, authors=None):
         
         repo.uuid = ra.get_uuid()
         
-        log_iter = ra.iter_log(paths=None, start=end_rev, end=1,
+        log_iter = ra.iter_log(paths=None, start=end_rev, end=base_rev + 1,
             strict_node_history=False, discover_changed_paths=True)
         
         # TODO: use "get_location_segments" instead
@@ -86,6 +87,8 @@ def main(dump, git_ref, url, end_rev=INVALID_REVNUM, authors=None):
                 new_branch=new,
             ))
         
+        if log and new is None and branch != "":
+            log[-1].new_branch = branch
         prev = Record(rev=0, new_branch="")
         url = repos_root
         
@@ -118,6 +121,9 @@ def main(dump, git_ref, url, end_rev=INVALID_REVNUM, authors=None):
             print("data", len(log), file=repo.dump)
             repo.dump.write(log)
             print(file=repo.dump)
+            
+            if not prev.rev and base_rev:
+                print("from", git_ref, file=repo.dump)
             
             reporter = trace(ra.do_diff, entry.rev, "", url, RevEditor(repo),
                 True, True, True)
