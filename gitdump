@@ -23,6 +23,17 @@ INVALID_REVNUM = -1
 @fields(arg_types=dict(end_rev=int, base_rev=int))
 def main(dump, git_ref, url,
 end_rev=INVALID_REVNUM, base_rev=0, authors=None):
+    """Transform Subversion revisions to Git's fast-import format
+    
+    Usage: gitdump <dump file> <ref name> <subversion-url> [options]
+    Options:
+    -end_rev  Subversion revision to look up; default: HEAD
+    -base_rev  Subversion revision to begin from; default: 0. If not zero,
+        the existing Git branch is assumed to match.
+    -authors  File mapping Subversion user names to Git authors, like "git-
+        svn"
+    """
+    
     if authors is not None:
         author_map = dict()
         with open(authors, "rt") as file:
@@ -75,6 +86,8 @@ end_rev=INVALID_REVNUM, base_rev=0, authors=None):
                     prefix = branch + "/"
                     if not any(path.startswith(prefix)
                     for path in paths.keys()):
+                        # This revision is a simple branch copy without any
+                        # file changes. Do not generate a Git commit from it.
                         if log and log[-1].new_branch is None:
                             log[-1].new_branch = new
                         continue
