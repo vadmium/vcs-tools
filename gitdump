@@ -13,58 +13,9 @@ from functools import partial
 from time import strptime
 from calendar import timegm
 from io import SEEK_END
-from lib import Function
 from lib import Record
-
-def nop(*args, **kw):
-    pass
-
-class traced(Function):
-    def __init__(self, func, name=None, abbrev=set()):
-        self.func = func
-        self.name = name
-        self.abbrev = abbrev
-        
-        if self.name is None:
-            self.name = func.__name__
-    
-    def __call__(self, *args, **kw):
-        print(self.name, end="(", file=stderr)
-        
-        for (k, v) in enumerate(args):
-            if k:
-                print(", ", end="", file=stderr)
-            if k in self.abbrev:
-                v = "..."
-            else:
-                v = repr(v)
-            print(v, end="", file=stderr)
-        
-        comma = bool(args)
-        for (k, v) in kw.items():
-            if comma:
-                print(", ", end="", file=stderr)
-            if k in self.abbrev:
-                v = "..."
-            else:
-                v = repr(v)
-            print("{}={}".format(k, v), end="", file=stderr)
-            comma = True
-        
-        print(end=") ", file=stderr)
-        stderr.flush()
-        ret = self.func(*args, **kw)
-        if "return" in self.abbrev:
-            v = "..."
-        else:
-            v = repr(ret)
-        print("->", v, file=stderr)
-        return ret
-
-def trace(func, *args, **kw):
-    return traced(func)(*args, **kw)
-def Tracer(name):
-    return traced(nop, name=name)
+from lib import nop
+from lib.ftrace import (traced, trace, Tracer)
 
 def main(dump, git_branch, url, end_rev=None, authors=None):
     if end_rev is None:
