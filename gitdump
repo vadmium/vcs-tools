@@ -58,6 +58,12 @@ end_rev=INVALID_REVNUM, base_rev=0, authors=None):
         
         repo.uuid = ra.get_uuid()
         
+        # If the log's starting revision is INVALID_REVNUM, Google Code seems
+        # to look up the path in the log's ending revision, which fails if it
+        # wasn't created then.
+        if end_rev == INVALID_REVNUM:
+            end_rev = traced(ra.get_latest_revnum)()
+        
         log_iter = ra.iter_log(paths=None, start=end_rev, end=base_rev + 1,
             strict_node_history=False, discover_changed_paths=True)
         
