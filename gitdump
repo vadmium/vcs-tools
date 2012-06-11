@@ -89,7 +89,7 @@ end_rev=INVALID_REVNUM, base_rev=0, authors=None):
                 print("{}: beginning of {}".format(rev, new), file=stderr)
                 
                 if branch is not None:
-                    prefix = branch + "/"
+                    prefix = new + "/"
                     if not any(path.startswith(prefix)
                     for path in paths.keys()):
                         # This revision is a simple branch copy without any
