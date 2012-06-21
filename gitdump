@@ -78,25 +78,39 @@ end_rev=INVALID_REVNUM, base_rev=0, authors=None):
                 print("(stopped)", file=stderr)
                 break
             
-            try:
-                (_, src, _, _) = paths[branch]
-            except LookupError:
-                new = None
-                print(rev, file=stderr)
-            else:
-                new = branch
-                branch = src
-                print("{}: beginning of {}".format(rev, new), file=stderr)
+            parent = len(branch)
+            while True:
+                try:
+                    (_, src, _, _) = paths[branch[:parent]]
+                except LookupError:
+                    pass
+                else:
+                    new = branch
+                    break
                 
-                if branch is not None:
-                    prefix = new + "/"
-                    if not any(path.startswith(prefix)
-                    for path in paths.keys()):
-                        # This revision is a simple branch copy without any
-                        # file changes. Do not generate a Git commit from it.
-                        if log and log[-1].new_branch is None:
-                            log[-1].new_branch = new
-                        continue
+                try:
+                    parent = branch.rindex("/", 0, parent)
+                except ValueError:
+                    new = None
+                    break
+            
+            if new is None:
+                print(rev, file=stderr)
+            elif src is None:
+                print("{}: beginning of {}".format(rev, new), file=stderr)
+            else:
+                branch = src + branch[parent:]
+                print("{rev}: copied from {branch}".format(**locals()),
+                    file=stderr)
+                
+                prefix = new + "/"
+                if not any(path.startswith(prefix)
+                for path in paths.keys()):
+                    # This revision is a simple branch copy without any
+                    # file changes. Do not generate a Git commit from it.
+                    if log and log[-1].new_branch is None:
+                        log[-1].new_branch = new
+                    continue
             
             log.append(Record(
                 rev=rev,
@@ -105,6 +119,9 @@ end_rev=INVALID_REVNUM, base_rev=0, authors=None):
                 log = props[PROP_REVISION_LOG],
                 new_branch=new,
             ))
+            
+            if new is not None and src is None:
+                break
         
         if log and new is None and branch != "":
             log[-1].new_branch = branch
