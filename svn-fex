@@ -1,6 +1,27 @@
 #! /usr/bin/env python2
 from __future__ import print_function
 
+"""Converter from Subversion to Git's "fast-import" format
+
+The program is written to
+
+* use Subversion's remote access protocol
+* minimise traffic from the Subversion server by
+    * skipping revisions that do not affect the branch
+    * skipping paths that are outside the branch
+    * requesting deltas rather than full copies of files where practical
+* follow branch copies
+* produce identical commits to "git-svn"
+* be run incrementally
+
+It does not
+
+* handle or correlate multiple trunks, branches, or tags
+* take account of any kind of Subversion merge tracking
+* handle special kinds of files (symbolic links, executables)
+* do anything with special Subversion file or revision properties
+"""
+
 from subvertpy.ra import (RemoteAccess, Auth, get_username_provider)
 from subvertpy.delta import apply_txdelta_window
 from subvertpy.properties import (
@@ -23,9 +44,13 @@ INVALID_REVNUM = -1
 @fields(arg_types=dict(end_rev=int, base_rev=int))
 def main(dump, git_ref, url,
 end_rev=INVALID_REVNUM, base_rev=0, authors=None):
-    """Transform Subversion revisions to Git's fast-import format
+    """Transform Subversion revisions to Git's "fast-import" format
     
-    Usage: gitdump <dump file> <ref name> <subversion-url> [options]
+    Usage: svn-fex <fast-import file> <ref name> <subversion URL> [options]
+    
+    The <ref name> argument should include everything that follows the
+    "refs/" prefix.
+    
     Options:
     -end_rev  Subversion revision to look up; default: HEAD
     -base_rev  Subversion revision to begin from; default: 0. If not zero,
