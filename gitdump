@@ -16,7 +16,7 @@ from io import SEEK_END
 from lib import Record
 from lib import fields
 from lib import nop
-from lib.ftrace import (traced, trace, Tracer)
+from lib.ftrace import (traced, Tracer)
 
 INVALID_REVNUM = -1
 
@@ -51,7 +51,7 @@ end_rev=INVALID_REVNUM, base_rev=0, authors=None):
         # URLs: "No provider registered for 'svn.username' credentials"
         auth = Auth((get_username_provider(),))
         
-        ra = trace(RemoteAccess, url, auth=auth)
+        ra = traced(RemoteAccess)(url, auth=auth)
         
         repos_root = ra.get_repos_root()
         branch = url[len(repos_root):]
@@ -130,7 +130,7 @@ end_rev=INVALID_REVNUM, base_rev=0, authors=None):
         
         for entry in reversed(log):
             if prev.new_branch is not None:
-                trace(ra.reparent, url)
+                traced(ra.reparent)(url)
             
             if entry.new_branch is not None:
                 url = repos_root + entry.new_branch
@@ -161,10 +161,10 @@ end_rev=INVALID_REVNUM, base_rev=0, authors=None):
             if not prev.rev and base_rev:
                 print("from", git_ref, file=repo.dump)
             
-            reporter = trace(ra.do_diff, entry.rev, "", url, RevEditor(repo),
+            reporter = traced(ra.do_diff)(entry.rev, "", url, RevEditor(repo),
                 True, True, True)
             reporter.set_path("", prev.rev, False)
-            trace(reporter.finish)
+            traced(reporter.finish)()
             # Assume the editor calls are all completed now
             
             print(file=repo.dump)
