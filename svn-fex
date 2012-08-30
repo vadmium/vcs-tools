@@ -37,7 +37,7 @@ from io import SEEK_END
 from lib import Record
 from lib import fields
 from lib import nop
-from lib.ftrace import (traced, Tracer)
+from lib.trace import (traced, Tracer)
 
 INVALID_REVNUM = -1
 
