@@ -38,6 +38,7 @@ from lib import Record
 from lib import fields
 from lib import nop
 from lib.trace import (traced, Tracer)
+from subvertpy import SubversionException
 
 INVALID_REVNUM = -1
 
@@ -99,6 +100,10 @@ end_rev=INVALID_REVNUM, base_rev=0, authors=None):
             stderr.flush()
             try:
                 (paths, rev, props, _) = next(log_iter)
+            except SubversionException as err:
+                (msg, _) = err.args
+                print(file=stderr)
+                raise SystemExit(msg)
             except StopIteration:
                 print("(stopped)", file=stderr)
                 break
