@@ -77,7 +77,10 @@ end_rev=INVALID_REVNUM, base_rev=0, authors=None):
         # URLs: "No provider registered for 'svn.username' credentials"
         auth = Auth((get_username_provider(),))
         
-        ra = traced(RemoteAccess)(url, auth=auth)
+        stderr.writelines(("connecting to ", url))
+        stderr.flush()
+        ra = RemoteAccess(url, auth=auth)
+        print(file=stderr)
         
         repos_root = ra.get_repos_root()
         branch = url[len(repos_root):]
@@ -88,7 +91,10 @@ end_rev=INVALID_REVNUM, base_rev=0, authors=None):
         # to look up the path in the log's ending revision, which fails if it
         # wasn't created then.
         if end_rev == INVALID_REVNUM:
-            end_rev = traced(ra.get_latest_revnum)()
+            stderr.write("HEAD: ")
+            stderr.flush()
+            end_rev = ra.get_latest_revnum()
+            print(end_rev, file=stderr)
         
         log_iter = ra.iter_log(paths=None, start=end_rev, end=base_rev + 1,
             strict_node_history=False, discover_changed_paths=True)
@@ -160,7 +166,13 @@ end_rev=INVALID_REVNUM, base_rev=0, authors=None):
         
         for entry in reversed(log):
             if prev.new_branch is not None:
-                traced(ra.reparent)(url)
+                path = url[len(repos_root):]
+                if not path:
+                    path = "/"
+                stderr.writelines(("switching to ", path))
+                stderr.flush()
+                ra.reparent(url)
+                print(file=stderr)
             
             if entry.new_branch is not None:
                 url = repos_root + entry.new_branch
@@ -191,11 +203,17 @@ end_rev=INVALID_REVNUM, base_rev=0, authors=None):
             if not prev.rev and base_rev:
                 print("from", git_ref, file=repo.dump)
             
-            reporter = traced(ra.do_diff)(entry.rev, "", url, RevEditor(repo),
+            stderr.write("{}@{}".format(url[len(repos_root):], entry.rev))
+            stderr.flush()
+            reporter = ra.do_diff(entry.rev, "", url, RevEditor(repo),
                 True, True, True)
+            
+            stderr.write(":")
+            stderr.flush()
             reporter.set_path("", prev.rev, False)
-            traced(reporter.finish)()
+            reporter.finish()
             # Assume the editor calls are all completed now
+            print(file=stderr)
             
             print(file=repo.dump)
             
@@ -220,11 +238,11 @@ class DirEditor(NodeEditor):
     @traced
     def open_directory(self, path, base):
         return self
-    @traced
     def add_file(self, path):
+        stderr.writelines(("\n  A ", path))
         return FileEditor(path, bytes(), self.repo)
-    @traced
     def open_file(self, path, base):
+        stderr.writelines(("\n  M ", path))
         return FileEditor(path, self.repo.files[path], self.repo)
     @traced
     def delete_entry(self, path, rev):
