@@ -34,29 +34,27 @@ from functools import partial
 from time import strptime
 from calendar import timegm
 from io import SEEK_END
-from lib import Record
-from lib import fields
-from lib import nop
-from lib.trace import (traced, Tracer)
+from shorthand import Record
+from shorthand import fields
+from shorthand import nop
+from calltrace import (traced, Tracer)
 from subvertpy import SubversionException
+from funcparams import command
 
 INVALID_REVNUM = -1
 
-@fields(arg_types=dict(end_rev=int, base_rev=int))
+@fields(param_types=dict(end_rev=int, base_rev=int))
 def main(dump, git_ref, url,
 end_rev=INVALID_REVNUM, base_rev=0, authors=None):
     """Transform Subversion revisions to Git's "fast-import" format
     
-    Usage: svn-fex <fast-import file> <ref name> <subversion URL> [options]
-    
-    The <ref name> argument should include everything that follows the
-    "refs/" prefix.
-    
-    Options:
-    -end_rev  Subversion revision to look up; default: HEAD
-    -base_rev  Subversion revision to begin from; default: 0. If not zero,
+    dump  Fast import file
+    git_ref  Should include everything that follows the "refs/" prefix
+    url  Subversion URL
+    end_rev  Subversion revision to look up; default: HEAD
+    base_rev  Subversion revision to begin from; default: 0. If not zero,
         the existing Git branch is assumed to match.
-    -authors  File mapping Subversion user names to Git authors, like "git-
+    authors  File mapping Subversion user names to Git authors, like "git-
         svn"
     """
     
@@ -301,5 +299,5 @@ class FileArray(object):
         return "{}({}, {}, {})".format(type(self).__name__,
             self.file, self.pos, self.len)
 
-from lib import run_main
-run_main(__name__)
+if __name__ == "__main__":
+    command()
