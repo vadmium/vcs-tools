@@ -37,7 +37,7 @@ from io import SEEK_END
 from shorthand import Record
 from shorthand import fields
 from shorthand import nop
-from calltrace import (traced, Tracer)
+from calltrace import Tracer
 from subvertpy import SubversionException
 from funcparams import command
 
@@ -230,11 +230,11 @@ class RevEditor(Editor):
 class NodeEditor(Editor):
     change_prop = nop
 class DirEditor(NodeEditor):
-    @traced
     def add_directory(self, path):
+        stderr.writelines(("\n  A ", path, "/"))
         return self
-    @traced
     def open_directory(self, path, base):
+        stderr.writelines(("\n  M ", path, "/"))
         return self
     def add_file(self, path):
         stderr.writelines(("\n  A ", path))
@@ -242,8 +242,8 @@ class DirEditor(NodeEditor):
     def open_file(self, path, base):
         stderr.writelines(("\n  M ", path))
         return FileEditor(path, self.repo.files[path], self.repo)
-    @traced
     def delete_entry(self, path, rev):
+        stderr.writelines(("\n  D ", path))
         print("D", path, file=self.repo.dump)
 
 class FileEditor(NodeEditor):
