@@ -34,7 +34,6 @@ from functools import partial
 from time import strptime
 from calendar import timegm
 from io import SEEK_END
-from shorthand import Record
 from shorthand import fields
 from shorthand import nop
 from calltrace import Tracer
@@ -67,10 +66,10 @@ end_rev=INVALID_REVNUM, base_rev=0, authors=None):
                 (svn, git) = line.split(" = ", 1)
                 author_map[svn] = git
     
-    repo = Record(files=dict())
+    repo = dict(files=dict())
     uuid_url = True
     
-    with open(dump, "w+b") as repo.dump:
+    with open(dump, "w+b") as repo["dump"]:
         # Auth stuff avoids the following error for diffs on local (file://)
         # URLs: "No provider registered for 'svn.username' credentials"
         auth = Auth((get_username_provider(),))
@@ -83,7 +82,7 @@ end_rev=INVALID_REVNUM, base_rev=0, authors=None):
         repos_root = ra.get_repos_root()
         branch = url[len(repos_root):]
         
-        repo.uuid = ra.get_uuid()
+        repo["uuid"] = ra.get_uuid()
         
         # If the log's starting revision is INVALID_REVNUM, Google Code seems
         # to look up the path in the log's ending revision, which fails if it
@@ -142,11 +141,11 @@ end_rev=INVALID_REVNUM, base_rev=0, authors=None):
                 for path in paths.keys()):
                     # This revision is a simple branch copy without any
                     # file changes. Do not generate a Git commit from it.
-                    if log and log[-1].new_branch is None:
-                        log[-1].new_branch = new
+                    if log and log[-1]["new_branch"] is None:
+                        log[-1]["new_branch"] = new
                     continue
             
-            log.append(Record(
+            log.append(dict(
                 rev=rev,
                 date=props[PROP_REVISION_DATE],
                 author=props[PROP_REVISION_AUTHOR],
@@ -158,12 +157,12 @@ end_rev=INVALID_REVNUM, base_rev=0, authors=None):
                 break
         
         if log and new is None and branch != "":
-            log[-1].new_branch = branch
-        prev = Record(rev=0, new_branch="")
+            log[-1]["new_branch"] = branch
+        prev = dict(rev=0, new_branch="")
         url = repos_root
         
         for entry in reversed(log):
-            if prev.new_branch is not None:
+            if prev["new_branch"] is not None:
                 path = url[len(repos_root):]
                 if not path:
                     path = "/"
@@ -172,48 +171,49 @@ end_rev=INVALID_REVNUM, base_rev=0, authors=None):
                 ra.reparent(url)
                 print(file=stderr)
             
-            if entry.new_branch is not None:
-                url = repos_root + entry.new_branch
+            if entry["new_branch"] is not None:
+                url = repos_root + entry["new_branch"]
             
-            print("commit refs/{}".format(git_ref), file=repo.dump)
+            print("commit refs/{}".format(git_ref), file=repo["dump"])
             
-            date = timegm(strptime(entry.date[:19], "%Y-%m-%dT%H:%M:%S"))
+            date = timegm(strptime(entry["date"][:19], "%Y-%m-%dT%H:%M:%S"))
             
             if authors is None:
-                author = ("{entry.author} <{entry.author}@{repo.uuid}>".
+                author = ("{entry[author]} <{entry[author]}@{repo[uuid]}>".
                     format(**locals()))
             else:
-                author = author_map[entry.author]
+                author = author_map[entry[author]]
             
             print("committer {author} {date} +0000".format(**locals()),
-                file=repo.dump)
+                file=repo["dump"])
             
             if uuid_url:
+                path = url[len(repos_root):]
                 log = "{}\n\ngit-svn-id: {}@{} {}\n".format(
-                    entry.log, url[len(repos_root):], entry.rev, repo.uuid)
+                    entry["log"], path, entry["rev"], repo["uuid"])
             else:
                 log = "{}\n\ngit-svn-id: {}@{} {}\n".format(
-                    entry.log, url, entry.rev, repo.uuid)
-            print("data", len(log), file=repo.dump)
-            repo.dump.write(log)
-            print(file=repo.dump)
+                    entry["log"], url, entry["rev"], repo["uuid"])
+            print("data", len(log), file=repo["dump"])
+            repo["dump"].write(log)
+            print(file=repo["dump"])
             
-            if not prev.rev and base_rev:
-                print("from", git_ref, file=repo.dump)
+            if not prev["rev"] and base_rev:
+                print("from", git_ref, file=repo["dump"])
             
-            stderr.write("{}@{}".format(url[len(repos_root):], entry.rev))
+            stderr.write("{}@{}".format(url[len(repos_root):], entry["rev"]))
             stderr.flush()
-            reporter = ra.do_diff(entry.rev, "", url, RevEditor(repo),
+            reporter = ra.do_diff(entry["rev"], "", url, RevEditor(repo),
                 True, True, True)
             
             stderr.write(":")
             stderr.flush()
-            reporter.set_path("", prev.rev, False)
+            reporter.set_path("", prev["rev"], False)
             reporter.finish()
             # Assume the editor calls are all completed now
             print(file=stderr)
             
-            print(file=repo.dump)
+            print(file=repo["dump"])
             
             prev = entry
 
@@ -241,10 +241,10 @@ class DirEditor(NodeEditor):
         return FileEditor(path, bytes(), self.repo)
     def open_file(self, path, base):
         stderr.writelines(("\n  M ", path))
-        return FileEditor(path, self.repo.files[path], self.repo)
+        return FileEditor(path, self.repo["files"][path], self.repo)
     def delete_entry(self, path, rev):
         stderr.writelines(("\n  D ", path))
-        print("D", path, file=self.repo.dump)
+        print("D", path, file=self.repo["dump"])
 
 class FileEditor(NodeEditor):
     def __init__(self, path, sbuf, *args, **kw):
@@ -264,19 +264,19 @@ class DeltaWindowHandler(object):
     #~ @partial(traced, abbrev={1})
     def __call__(self, chunk):
         if chunk is None:
-            self.editor.repo.dump.seek(0, SEEK_END)
+            self.editor.repo["dump"].seek(0, SEEK_END)
             
             print("M 644 inline", self.editor.path,
-                file=self.editor.repo.dump)
-            print("data", self.target_len, file=self.editor.repo.dump)
+                file=self.editor.repo["dump"])
+            print("data", self.target_len, file=self.editor.repo["dump"])
             
-            self.editor.repo.files[self.editor.path] = FileArray(
-                self.editor.repo.dump, self.editor.repo.dump.tell(),
+            self.editor.repo["files"][self.editor.path] = FileArray(
+                self.editor.repo["dump"], self.editor.repo["dump"].tell(),
                 self.target_len)
             for chunk in self.target_chunks:
-                self.editor.repo.dump.write(chunk)
+                self.editor.repo["dump"].write(chunk)
             
-            print(file=self.editor.repo.dump)
+            print(file=self.editor.repo["dump"])
         
         else:
             chunk = apply_txdelta_window(self.editor.sbuf, chunk)
