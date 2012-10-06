@@ -43,13 +43,13 @@ from funcparams import command
 INVALID_REVNUM = -1
 
 @fields(param_types=dict(end_rev=int, base_rev=int))
-def main(dump, git_ref, url,
+def main(url, dump, git_ref,
 end_rev=INVALID_REVNUM, base_rev=0, authors=None):
     """Transform Subversion revisions to Git's "fast-import" format
     
+    url  Subversion URL
     dump  Fast import file
     git_ref  Should include everything that follows the "refs/" prefix
-    url  Subversion URL
     end_rev  Subversion revision to look up; default: HEAD
     base_rev  Subversion revision to begin from; default: 0. If not zero,
         the existing Git branch is assumed to match.
