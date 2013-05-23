@@ -36,7 +36,7 @@ from calendar import timegm
 from io import SEEK_END
 from shorthand import fields
 from shorthand import nop
-from calltrace import Tracer
+from calltrace import tracer
 from subvertpy import SubversionException
 from funcparams import command
 
@@ -225,7 +225,7 @@ class RevEditor(Editor):
     set_target_revision = nop
     def open_root(self, base):
         return DirEditor(self.repo)
-    abort = Tracer("abort")
+    abort = tracer("abort")
 
 class NodeEditor(Editor):
     change_prop = nop
