@@ -148,7 +148,7 @@ end_rev=INVALID_REVNUM, base_rev=0, authors=None):
             log.append(dict(
                 rev=rev,
                 date=props[PROP_REVISION_DATE],
-                author=props[PROP_REVISION_AUTHOR],
+                author=props.get(PROP_REVISION_AUTHOR, "(no author)"),
                 log = props[PROP_REVISION_LOG],
                 new_branch=new,
             ))
