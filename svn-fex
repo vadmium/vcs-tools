@@ -1,8 +1,8 @@
 #! /usr/bin/env python2
 
-"""Converter from Subversion to Git's "fast-import" format
+"""Converts from a remote Subversion repository to Git's "fast-import" format
 
-The program is written to
+The program is written to:
 
 * use Subversion's remote access protocol
 * minimise traffic from the Subversion server by
@@ -13,7 +13,7 @@ The program is written to
 * produce identical commits to "git-svn"
 * be run incrementally
 
-It does not
+It does not:
 
 * handle or correlate multiple trunks, branches, or tags
 * take account of any kind of Subversion merge tracking
@@ -31,13 +31,9 @@ from subvertpy.properties import (
     PROP_REVISION_LOG,
 )
 from sys import (stderr, argv)
-from functools import partial
 from time import strptime
 from calendar import timegm
 from io import SEEK_END
-from shorthand import fields
-from shorthand import nop
-from calltrace import tracer
 from subvertpy import SubversionException
 import argparse
 from funcparams import splitdoc
@@ -139,7 +135,7 @@ class Repo(object):
                 except SubversionException as err:
                     (msg, _) = err.args
                     if not self.quiet:
-                        print(file=stderr)
+                        print("(error)", file=stderr)
                     raise SystemExit(msg)
                 except StopIteration:
                     if not self.quiet:
@@ -270,15 +266,19 @@ class Repo(object):
 class Editor(object):
     def __init__(self, repo):
         self.repo = repo
-    close = nop
+    def close(self):
+        pass
 class RevEditor(Editor):
-    set_target_revision = nop
+    def set_target_revision(self, rev):
+        pass
     def open_root(self, base):
         return DirEditor(self.repo)
-    abort = tracer("abort")
+    def abort(self):
+        pass
 
 class NodeEditor(Editor):
-    change_prop = nop
+    def change_prop(self, name, value):
+        pass
 class DirEditor(NodeEditor):
     def add_directory(self, path):
         if not self.repo.quiet:
@@ -316,7 +316,6 @@ class DeltaWindowHandler(object):
         self.target_chunks = list()
         self.target_len = 0
     
-    #~ @partial(traced, abbrev={1})
     def __call__(self, chunk):
         if chunk is None:
             self.editor.repo.dump.seek(0, SEEK_END)
@@ -351,7 +350,6 @@ class FileArray(object):
     def __getitem__(self, slice):
         return FileArray(self.file,
             self.pos + slice.start, slice.stop - slice.start)
-    #~ @partial(traced, abbrev={1, "return"})
     def __radd__(self, str):
         self.file.seek(self.pos)
         return str + self.file.read(self.len)

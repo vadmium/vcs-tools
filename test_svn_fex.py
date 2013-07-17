@@ -12,6 +12,7 @@ from subprocess import Popen
 
 class Test(TestCase):
     def setUp(self):
+        TestCase.setUp(self)
         self.svn_fex = runpy.run_path("svn-fex")
         
         # Massive hack to restore the module's global variables, which are
@@ -22,6 +23,7 @@ class Test(TestCase):
     
     def tearDown(self):
         rmtree(self.dir)
+        TestCase.tearDown(self)
     
     def test_modify_branch(self):
         """Modification of branch directory properties"""
