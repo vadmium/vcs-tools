@@ -30,23 +30,27 @@ from subvertpy.properties import (
     PROP_REVISION_AUTHOR,
     PROP_REVISION_LOG,
 )
-from sys import (stderr, argv)
+from sys import stderr, argv, exc_info
 from time import strptime
 from calendar import timegm
 from io import SEEK_END
 from subvertpy import SubversionException
+from subprocess import Popen
+import subprocess
 import argparse
 from funcparams import splitdoc
+from errno import EPIPE
 
 INVALID_REVNUM = -1
 
-def main(url, dump, git_ref,
+def main(url, git_ref, dump=None, importer=(),
 revision="0:HEAD", authors=None, root=None, quiet=False):
     """Transform Subversion revisions to Git's "fast-import" format
     
     url  Subversion URL
-    dump  Fast import file
     git_ref  Should include everything that follows the "refs/" prefix
+    dump  Fast import file
+    importer  Command pass the dump to
     revision  Subversion revisions to look up; default: 0:HEAD. If the range
         does not begin at zero, the existing Git branch is assumed to match.
     authors  File mapping Subversion user names to Git authors, like "git-
@@ -73,14 +77,19 @@ revision="0:HEAD", authors=None, root=None, quiet=False):
     else:
         author_map = None
     
-    Repo(url, dump, git_ref, base_rev, end_rev, author_map, root, quiet)
+    Repo(url, dump, importer, git_ref, base_rev, end_rev, author_map, root,
+        quiet)
 
 class Repo(object):
-    def __init__(self, url, dump, git_ref, base_rev, end_rev, author_map,
-    root, quiet):
+    def __init__(self, url, dump, importer, git_ref, base_rev, end_rev,
+    author_map, root, quiet):
         self.quiet = quiet
         
-        with FastExportFile(dump) as self.export:
+        if importer:
+            self.export = FastExportPipe(importer)
+        else:
+            self.export = FastExportFile(dump)
+        with self.export:
             # Auth stuff avoids the following error for diffs on local
             # (file://) URLs: "No provider registered for 'svn.username'
             # credentials"
@@ -276,14 +285,12 @@ class FastExport(object):
         try:
             self.open(*pos, **kw)
         except:
-            self.close()
+            self.__exit__(*exc_info())
             raise
     def open(self):
         pass
     def __enter__(self):
         return self
-    def __exit__(self, *exc):
-        self.close()
 
 class FastExportFile(FastExport):
     def __init__(self, dump):
@@ -292,8 +299,8 @@ class FastExportFile(FastExport):
         FastExport.__init__(self)
     def open(self):
         self.dump.tell()  # Make sure it is seekable
-    def close(self):
-        return self.dump.close()
+    def __exit__(self, *exc):
+        self.dump.close()
     
     def filemodify(self, path, len, chunks):
         self.dump.seek(0, SEEK_END)
@@ -309,6 +316,63 @@ class FastExportFile(FastExport):
     
     def __getitem__(self, path):
         return self.files[path]
+
+class FastExportPipe(FastExport):
+    def __init__(self, importer):
+        self.proc = Popen(importer,
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, bufsize=-1)
+        FastExport.__init__(self)
+    def open(self):
+        self.dump = self.proc.stdin
+        print("feature cat-blob", file=self.dump)
+        print("feature ls", file=self.dump)
+    
+    def __exit__(self, type, value, traceback):
+        try:
+            if not value:
+                print("done", file=self.dump)
+        except BaseException as err:
+            value = err
+        finally:
+            self.proc.stdout.close()
+            
+            try:
+                self.proc.stdin.close()
+            except EnvironmentError as err:
+                if err.errno != EPIPE:
+                    raise
+                # Underlying file descriptor seems to get closed anyway,
+                # despite the broken pipe exception
+                
+                returncode = self.proc.wait()
+                if not value and not returncode:
+                    raise
+            else:
+                returncode = self.proc.wait()
+            if (not value or isinstance(value, EnvironmentError)
+            and value.errno == EPIPE) and returncode:
+                raise SystemExit(returncode)
+    
+    def filemodify(self, path, len, chunks):
+        print("M 644 inline", path, file=self.dump)
+        print("data", len, file=self.dump)
+        for chunk in chunks:
+            self.dump.write(chunk)
+        print(file=self.dump)
+    
+    def __getitem__(self, path):
+        path = path.replace("\\", r"\\")
+        path = path.replace('"', r'\"').replace("\n", r"\n")
+        print('ls "{}"'.format(path), file=self.dump)
+        self.dump.flush()
+        blob = self.proc.stdout.readline()
+        blob = blob.split(" ", 2)[2].split("\t", 1)[0]
+        print("cat-blob", blob, file=self.dump)
+        self.dump.flush()
+        size = int(self.proc.stdout.readline().split(" ", 3)[2])
+        blob = self.proc.stdout.read(size)
+        self.proc.stdout.readline()
+        return blob
 
 class Editor(object):
     def __init__(self, repo):
@@ -396,8 +460,11 @@ if __name__ == "__main__":
     (summary, _) = splitdoc(main.__doc__)
     parser = argparse.ArgumentParser(description=summary)
     parser.add_argument("url", help="subversion URL")
-    parser.add_argument("dump", help="fast import file")
-    parser.add_argument("git_ref",
+    parser.add_argument("--dump", metavar="FILENAME",
+        help="fast import file")
+    parser.add_argument("importer", nargs="*",
+        help="command which is piped the fast import stream")
+    parser.add_argument("--git-ref", required=True, metavar="REF",
         help='should include everything that follows the "refs/" prefix')
     parser.add_argument("-r", "--revision", metavar="BASE:END",
         default="0:HEAD", help="""subversion revisions to look up (default:
@@ -410,5 +477,9 @@ if __name__ == "__main__":
     parser.add_argument("-q", "--quiet", action="store_true",
         help="suppress progress messages")
     args = parser.parse_args()
-    main(args.url, args.dump, args.git_ref, revision=args.revision,
-        authors=args.authors_file, root=args.rewrite_root, quiet=args.quiet)
+    main(args.url, args.git_ref, dump=args.dump, importer=args.importer,
+        revision=args.revision,
+        authors=args.authors_file,
+        root=args.rewrite_root,
+        quiet=args.quiet,
+    )
