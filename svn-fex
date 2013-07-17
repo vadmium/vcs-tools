@@ -39,7 +39,8 @@ from shorthand import fields
 from shorthand import nop
 from calltrace import tracer
 from subvertpy import SubversionException
-from funcparams import command
+import argparse
+from funcparams import splitdoc
 
 INVALID_REVNUM = -1
 
@@ -311,4 +312,18 @@ class FileArray(object):
             self.file, self.pos, self.len)
 
 if __name__ == "__main__":
-    command()
+    (summary, _) = splitdoc(main)
+    parser = argparse.ArgumentParser(description=summary)
+    parser.add_argument("url", help="subversion URL")
+    parser.add_argument("dump", help="fast import file")
+    parser.add_argument("git-ref",
+        help='should include everything that follows the "refs/" prefix')
+    parser.add_argument("-r", "--revision", metavar="BASE:END",
+        default="0:HEAD", help="""subversion revisions to look up (default:
+        0:HEAD). If the range does not begin at zero, the existing Git branch
+        is assumed to match.""")
+    parser.add_argument("-A", "--authors-file", metavar="FILENAME", help=
+        'file mapping Subversion user names to Git authors, like "git-svn"')
+    args = parser.parse_args()
+    main(args.url, args.dump, args.git_ref, revision=args.revision,
+        authors=args.authors_file)
