@@ -324,6 +324,7 @@ class FastExportPipe(FastExport):
         FastExport.__init__(self)
     def open(self):
         self.dump = self.proc.stdin
+        print("feature done", file=self.dump)
         print("feature cat-blob", file=self.dump)
         print("feature ls", file=self.dump)
     
