@@ -43,30 +43,38 @@ from errno import EPIPE
 
 INVALID_REVNUM = -1
 
-def main(url, git_ref, dump=None, importer=(),
-revision="0:HEAD", authors=None, root=None, quiet=False):
-    """Transform Subversion revisions to Git's "fast-import" format
+def main():
+    (summary, _) = splitdoc(__doc__)
+    parser = argparse.ArgumentParser(description=summary)
     
-    url  Subversion URL
-    git_ref  Should include everything that follows the "refs/" prefix
-    dump  Fast import file
-    importer  Command pass the dump to
-    revision  Subversion revisions to look up; default: 0:HEAD. If the range
-        does not begin at zero, the existing Git branch is assumed to match.
-    authors  File mapping Subversion user names to Git authors, like "git-
-        svn"
-    root  Subversion URL to store in the metadata
-    quiet  Suppress progress messages
-    """
+    parser.add_argument("url", help="subversion URL")
+    parser.add_argument("--dump", metavar="FILENAME",
+        help="fast import file")
+    parser.add_argument("importer", nargs="*",
+        help="command which is piped the fast import stream")
+    parser.add_argument("--git-ref", required=True, metavar="REF",
+        help='should include everything that follows the "refs/" prefix')
+    parser.add_argument("-r", "--revision", metavar="BASE:END",
+        default="0:HEAD", help="""subversion revisions to look up (default:
+        0:HEAD). If the range does not begin at zero, the existing Git branch
+        is assumed to match.""")
+    parser.add_argument("-A", "--authors-file", metavar="FILENAME", help=
+        'file mapping Subversion user names to Git authors, like "git-svn"')
+    parser.add_argument("--rewrite-root", metavar="URL",
+        help="subversion URL to store in the metadata")
+    parser.add_argument("-q", "--quiet", action="store_true",
+        help="suppress progress messages")
     
-    (base_rev, end_rev) = revision.split(":")
+    args = parser.parse_args()
+    
+    (base_rev, end_rev) = args.revision.split(":")
     base_rev = parse_svn_rev(base_rev)
     end_rev = parse_svn_rev(end_rev)
     if (base_rev == INVALID_REVNUM or
     end_rev != INVALID_REVNUM and end_rev < base_rev):
         (base_rev, end_rev) = (end_rev, base_rev)
     
-    if authors is not None:
+    if args.authors_file is not None:
         author_map = dict()
         with open(authors, "rt") as file:
             for line in file:
@@ -77,12 +85,20 @@ revision="0:HEAD", authors=None, root=None, quiet=False):
     else:
         author_map = None
     
-    Repo(url, dump, importer, git_ref, base_rev, end_rev, author_map, root,
-        quiet)
+    Repo(args.url, args.git_ref, dump=args.dump, importer=args.importer,
+        base_rev=base_rev, end_rev=end_rev,
+        author_map=author_map,
+        root=args.rewrite_root,
+        quiet=args.quiet,
+    )
 
 class Repo(object):
-    def __init__(self, url, dump, importer, git_ref, base_rev, end_rev,
-    author_map, root, quiet):
+    def __init__(self, url, git_ref, dump=None, importer=(),
+        base_rev=0, end_rev=INVALID_REVNUM,
+        author_map=None,
+        root=None,
+        quiet=False,
+    ):
         self.quiet = quiet
         
         if importer:
@@ -458,29 +474,4 @@ class FileArray(object):
             self.file, self.pos, self.len)
 
 if __name__ == "__main__":
-    (summary, _) = splitdoc(main.__doc__)
-    parser = argparse.ArgumentParser(description=summary)
-    parser.add_argument("url", help="subversion URL")
-    parser.add_argument("--dump", metavar="FILENAME",
-        help="fast import file")
-    parser.add_argument("importer", nargs="*",
-        help="command which is piped the fast import stream")
-    parser.add_argument("--git-ref", required=True, metavar="REF",
-        help='should include everything that follows the "refs/" prefix')
-    parser.add_argument("-r", "--revision", metavar="BASE:END",
-        default="0:HEAD", help="""subversion revisions to look up (default:
-        0:HEAD). If the range does not begin at zero, the existing Git branch
-        is assumed to match.""")
-    parser.add_argument("-A", "--authors-file", metavar="FILENAME", help=
-        'file mapping Subversion user names to Git authors, like "git-svn"')
-    parser.add_argument("--rewrite-root", metavar="URL",
-        help="subversion URL to store in the metadata")
-    parser.add_argument("-q", "--quiet", action="store_true",
-        help="suppress progress messages")
-    args = parser.parse_args()
-    main(args.url, args.git_ref, dump=args.dump, importer=args.importer,
-        revision=args.revision,
-        authors=args.authors_file,
-        root=args.rewrite_root,
-        quiet=args.quiet,
-    )
+    main()
