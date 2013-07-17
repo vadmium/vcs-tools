@@ -155,6 +155,9 @@ end_rev=INVALID_REVNUM, base_rev=0, authors=None):
             
             if new is not None and src is None:
                 break
+        # Make sure the underlying log call has completed
+        for _ in log_iter:
+            pass
         
         if log and new is None and branch != "":
             log[-1]["new_branch"] = branch
