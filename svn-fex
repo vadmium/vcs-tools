@@ -43,20 +43,25 @@ from funcparams import command
 
 INVALID_REVNUM = -1
 
-@fields(param_types=dict(end_rev=int, base_rev=int))
 def main(url, dump, git_ref,
-end_rev=INVALID_REVNUM, base_rev=0, authors=None):
+revision="0:HEAD", authors=None):
     """Transform Subversion revisions to Git's "fast-import" format
     
     url  Subversion URL
     dump  Fast import file
     git_ref  Should include everything that follows the "refs/" prefix
-    end_rev  Subversion revision to look up; default: HEAD
-    base_rev  Subversion revision to begin from; default: 0. If not zero,
-        the existing Git branch is assumed to match.
+    revision  Subversion revisions to look up; default: 0:HEAD. If the range
+        does not begin at zero, the existing Git branch is assumed to match.
     authors  File mapping Subversion user names to Git authors, like "git-
         svn"
     """
+    
+    (base_rev, end_rev) = revision.split(":")
+    base_rev = int(base_rev)
+    if end_rev.upper() == "HEAD":
+        end_rev = INVALID_REVNUM
+    else:
+        end_rev = int(end_rev)
     
     if authors is not None:
         author_map = dict()
