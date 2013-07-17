@@ -78,12 +78,9 @@ revision="0:HEAD", authors=None, root=None, quiet=False):
 class Repo(object):
     def __init__(self, url, dump, git_ref, base_rev, end_rev, author_map,
     root, quiet):
-        self.files = dict()
         self.quiet = quiet
         
-        with open(dump, "w+b") as self.dump:
-            self.dump.tell()  # Make sure it is seekable
-            
+        with FastExportFile(dump) as self.export:
             # Auth stuff avoids the following error for diffs on local
             # (file://) URLs: "No provider registered for 'svn.username'
             # credentials"
@@ -226,7 +223,8 @@ class Repo(object):
                     url = repos_root + entry["new_branch"]
                 path = url[len(repos_root):]
                 
-                print("commit refs/{}".format(git_ref), file=self.dump)
+                print("commit refs/{}".format(git_ref),
+                    file=self.export.dump)
                 
                 date = strptime(entry["date"][:19], "%Y-%m-%dT%H:%M:%S")
                 date = timegm(date)
@@ -238,16 +236,16 @@ class Repo(object):
                     author = author_map[entry["author"]]
                 
                 print("committer {} {} +0000".format(author, date),
-                    file=self.dump)
+                    file=self.export.dump)
                 
                 log = "{}\n\ngit-svn-id: {}{}@{} {}\n".format(
                     entry["log"], root, path, entry["rev"], self.uuid)
-                print("data", len(log), file=self.dump)
-                self.dump.write(log)
-                print(file=self.dump)
+                print("data", len(log), file=self.export.dump)
+                self.export.dump.write(log)
+                print(file=self.export.dump)
                 
                 if not prev["rev"] and base_rev:
-                    print("from", git_ref, file=self.dump)
+                    print("from", git_ref, file=self.export.dump)
                 
                 if not self.quiet:
                     stderr.write("{}@{}:".format(path, entry["rev"]))
@@ -269,9 +267,48 @@ class Repo(object):
                 if not self.quiet:
                     print(file=stderr)
                 
-                print(file=self.dump)
+                print(file=self.export.dump)
                 
                 prev = entry
+
+class FastExport(object):
+    def __init__(self, *pos, **kw):
+        try:
+            self.open(*pos, **kw)
+        except:
+            self.close()
+            raise
+    def open(self):
+        pass
+    def __enter__(self):
+        return self
+    def __exit__(self, *exc):
+        self.close()
+
+class FastExportFile(FastExport):
+    def __init__(self, dump):
+        self.files = dict()
+        self.dump = open(dump, "w+b")
+        FastExport.__init__(self)
+    def open(self):
+        self.dump.tell()  # Make sure it is seekable
+    def close(self):
+        return self.dump.close()
+    
+    def filemodify(self, path, len, chunks):
+        self.dump.seek(0, SEEK_END)
+        
+        print("M 644 inline", path, file=self.dump)
+        print("data", len, file=self.dump)
+        
+        self.files[path] = FileArray(self.dump, self.dump.tell(), len)
+        for chunk in chunks:
+            self.dump.write(chunk)
+        
+        print(file=self.dump)
+    
+    def __getitem__(self, path):
+        return self.files[path]
 
 class Editor(object):
     def __init__(self, repo):
@@ -305,11 +342,11 @@ class DirEditor(NodeEditor):
     def open_file(self, path, base):
         if not self.repo.quiet:
             stderr.writelines(("\n  M ", path))
-        return FileEditor(path, self.repo.files[path], self.repo)
+        return FileEditor(path, self.repo.export[path], self.repo)
     def delete_entry(self, path, rev=None):
         if not self.repo.quiet:
             stderr.writelines(("\n  D ", path))
-        print("D", path, file=self.repo.dump)
+        print("D", path, file=self.repo.export.dump)
 
 class FileEditor(NodeEditor):
     def __init__(self, path, sbuf, *args, **kw):
@@ -328,20 +365,8 @@ class DeltaWindowHandler(object):
     
     def __call__(self, chunk):
         if chunk is None:
-            self.editor.repo.dump.seek(0, SEEK_END)
-            
-            print("M 644 inline", self.editor.path,
-                file=self.editor.repo.dump)
-            print("data", self.target_len, file=self.editor.repo.dump)
-            
-            self.editor.repo.files[self.editor.path] = FileArray(
-                self.editor.repo.dump, self.editor.repo.dump.tell(),
-                self.target_len)
-            for chunk in self.target_chunks:
-                self.editor.repo.dump.write(chunk)
-            
-            print(file=self.editor.repo.dump)
-        
+            self.editor.repo.export.filemodify(self.editor.path,
+                self.target_len, self.target_chunks)
         else:
             chunk = apply_txdelta_window(self.editor.sbuf, chunk)
             self.target_chunks.append(chunk)
