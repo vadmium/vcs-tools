@@ -1,5 +1,4 @@
 #! /usr/bin/env python2
-from __future__ import print_function
 
 """Converter from Subversion to Git's "fast-import" format
 
@@ -21,6 +20,8 @@ It does not
 * handle special kinds of files (symbolic links, executables)
 * do anything with special Subversion file or revision properties
 """
+
+from __future__ import print_function
 
 from subvertpy.ra import (RemoteAccess, Auth, get_username_provider)
 from subvertpy.delta import apply_txdelta_window
