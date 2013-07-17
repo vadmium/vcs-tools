@@ -70,6 +70,8 @@ end_rev=INVALID_REVNUM, base_rev=0, authors=None):
     uuid_url = True
     
     with open(dump, "w+b") as repo["dump"]:
+        repo["dump"].tell()  # Make sure it is seekable
+        
         # Auth stuff avoids the following error for diffs on local (file://)
         # URLs: "No provider registered for 'svn.username' credentials"
         auth = Auth((get_username_provider(),))
