@@ -45,7 +45,7 @@ from funcparams import splitdoc
 INVALID_REVNUM = -1
 
 def main(url, dump, git_ref,
-revision="0:HEAD", authors=None, quiet=False):
+revision="0:HEAD", authors=None, root=None, quiet=False):
     """Transform Subversion revisions to Git's "fast-import" format
     
     url  Subversion URL
@@ -55,6 +55,7 @@ revision="0:HEAD", authors=None, quiet=False):
         does not begin at zero, the existing Git branch is assumed to match.
     authors  File mapping Subversion user names to Git authors, like "git-
         svn"
+    root  Subversion URL to store in the metadata
     quiet  Suppress progress messages
     """
     
@@ -75,7 +76,6 @@ revision="0:HEAD", authors=None, quiet=False):
                 author_map[svn] = git
     
     repo = dict(files=dict(), quiet=quiet)
-    uuid_url = True
     
     with open(dump, "w+b") as repo["dump"]:
         repo["dump"].tell()  # Make sure it is seekable
@@ -93,6 +93,8 @@ revision="0:HEAD", authors=None, quiet=False):
         
         repos_root = ra.get_repos_root()
         branch = url[len(repos_root):]
+        if root is None:
+            root = repos_root
         
         repo["uuid"] = ra.get_uuid()
         
@@ -220,12 +222,8 @@ revision="0:HEAD", authors=None, quiet=False):
             print("committer {} {} +0000".format(author, date),
                 file=repo["dump"])
             
-            if uuid_url:
-                log = "{}\n\ngit-svn-id: {}@{} {}\n".format(
-                    entry["log"], path, entry["rev"], repo["uuid"])
-            else:
-                log = "{}\n\ngit-svn-id: {}@{} {}\n".format(
-                    entry["log"], url, entry["rev"], repo["uuid"])
+            log = "{}\n\ngit-svn-id: {}{}@{} {}\n".format(
+                entry["log"], root, path, entry["rev"], repo["uuid"])
             print("data", len(log), file=repo["dump"])
             repo["dump"].write(log)
             print(file=repo["dump"])
@@ -357,8 +355,10 @@ if __name__ == "__main__":
         is assumed to match.""")
     parser.add_argument("-A", "--authors-file", metavar="FILENAME", help=
         'file mapping Subversion user names to Git authors, like "git-svn"')
+    parser.add_argument("--rewrite-root", metavar="URL",
+        help="subversion URL to store in the metadata")
     parser.add_argument("-q", "--quiet", action="store_true",
         help="suppress progress messages")
     args = parser.parse_args()
     main(args.url, args.dump, args.git_ref, revision=args.revision,
-        authors=args.authors_file, quiet=args.quiet)
+        authors=args.authors_file, root=args.rewrite_root, quiet=args.quiet)
