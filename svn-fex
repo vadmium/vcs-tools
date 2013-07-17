@@ -141,8 +141,7 @@ revision="0:HEAD", authors=None):
                 print("{}: beginning of {}".format(rev, new), file=stderr)
             else:
                 branch = src + branch[parent:]
-                print("{rev}: copied from {branch}".format(**locals()),
-                    file=stderr)
+                print("{}: copied from {}".format(rev, branch), file=stderr)
                 
                 prefix = new + "/"
                 if not any(path.startswith(prefix)
@@ -190,12 +189,12 @@ revision="0:HEAD", authors=None):
             date = timegm(strptime(entry["date"][:19], "%Y-%m-%dT%H:%M:%S"))
             
             if authors is None:
-                author = ("{entry[author]} <{entry[author]}@{repo[uuid]}>".
-                    format(**locals()))
+                author = ("{author} <{author}@{uuid}>".
+                    format(author=entry["author"], uuid=repo["uuid"]))
             else:
                 author = author_map[entry[author]]
             
-            print("committer {author} {date} +0000".format(**locals()),
+            print("committer {} {} +0000".format(author, date),
                 file=repo["dump"])
             
             if uuid_url:
