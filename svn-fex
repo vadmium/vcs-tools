@@ -74,185 +74,198 @@ revision="0:HEAD", authors=None, root=None, quiet=False):
                     line = line[:-1]
                 (svn, git) = line.split(" = ", 1)
                 author_map[svn] = git
+    else:
+        author_map = None
     
-    repo = dict(files=dict(), quiet=quiet)
-    
-    with open(dump, "w+b") as repo["dump"]:
-        repo["dump"].tell()  # Make sure it is seekable
+    Repo(url, dump, git_ref, base_rev, end_rev, author_map, root, quiet)
+
+class Repo(object):
+    def __init__(self, url, dump, git_ref, base_rev, end_rev, author_map,
+    root, quiet):
+        self.files = dict()
+        self.quiet = quiet
         
-        # Auth stuff avoids the following error for diffs on local (file://)
-        # URLs: "No provider registered for 'svn.username' credentials"
-        auth = Auth((get_username_provider(),))
-        
-        if not repo["quiet"]:
-            stderr.writelines(("connecting to ", url))
-            stderr.flush()
-        ra = RemoteAccess(url, auth=auth)
-        if not repo["quiet"]:
-            print(file=stderr)
-        
-        repos_root = ra.get_repos_root()
-        branch = url[len(repos_root):]
-        if root is None:
-            root = repos_root
-        
-        repo["uuid"] = ra.get_uuid()
-        
-        # If the log's starting revision is INVALID_REVNUM, Google Code seems
-        # to look up the path in the log's ending revision, which fails if it
-        # wasn't created then.
-        if end_rev == INVALID_REVNUM:
-            if not repo["quiet"]:
-                stderr.write("HEAD: ")
+        with open(dump, "w+b") as self.dump:
+            self.dump.tell()  # Make sure it is seekable
+            
+            # Auth stuff avoids the following error for diffs on local
+            # (file://) URLs: "No provider registered for 'svn.username'
+            # credentials"
+            auth = Auth((get_username_provider(),))
+            
+            if not self.quiet:
+                stderr.writelines(("connecting to ", url))
                 stderr.flush()
-            end_rev = ra.get_latest_revnum()
-            if not repo["quiet"]:
-                print(end_rev, file=stderr)
-        
-        if end_rev == base_rev:
-            # Degenerate case because no revisions are actually in the
-            # range, but the log call would do a forwards log from
-            # revision N to N + 1.
-            return
-        
-        log_iter = ra.iter_log(paths=None, start=end_rev, end=base_rev + 1,
-            strict_node_history=False, discover_changed_paths=True)
-        
-        # TODO: use "get_location_segments" instead
-        log = list()
-        while True:
-            if not repo["quiet"]:
-                stderr.write("revision ")
-                stderr.flush()
-            try:
-                (paths, rev, props, _) = next(log_iter)
-            except SubversionException as err:
-                (msg, _) = err.args
-                if not repo["quiet"]:
-                    print(file=stderr)
-                raise SystemExit(msg)
-            except StopIteration:
-                if not repo["quiet"]:
-                    print("(stopped)", file=stderr)
-                break
-            
-            parent = len(branch)
-            # If the branch location changed, set "new" to the current branch
-            # location, and "src" to (a parent of) the previous location. If
-            # the location did not change, "new" is set to None.
-            while True:
-                # At the root directory, this searches for the empty string
-                # "" rather than "/". This should not matter because the root
-                # directory cannot be moved from anywhere.
-                path = paths.get(branch[:parent])
-                if path:
-                    (action, src, _, _) = path
-                    if src is not None or action in "AR":
-                        new = branch
-                        break
-                
-                parent = branch.rfind("/", 0, parent)
-                if parent < 0:
-                    new = None
-                    break
-            
-            if new is None:
-                if not repo["quiet"]:
-                    print(rev, file=stderr)
-            elif src is None:
-                if not repo["quiet"]:
-                    print("{}: beginning of {}".format(rev, new),
-                        file=stderr)
-            else:
-                branch = src + branch[parent:]
-                if not repo["quiet"]:
-                    print("{}: copied from {}".format(rev, branch),
-                        file=stderr)
-                
-                prefix = new + "/"
-                if not any(path.startswith(prefix)
-                for path in paths.keys()):
-                    # This revision is a simple branch copy without any
-                    # file changes. Do not generate a Git commit from it.
-                    if log and log[-1]["new_branch"] is None:
-                        log[-1]["new_branch"] = new
-                    continue
-            
-            log.append(dict(
-                rev=rev,
-                date=props[PROP_REVISION_DATE],
-                author=props.get(PROP_REVISION_AUTHOR, "(no author)"),
-                log = props[PROP_REVISION_LOG],
-                new_branch=new,
-            ))
-            
-            if new is not None and src is None:
-                break
-        # Make sure the underlying log call has completed
-        for _ in log_iter:
-            pass
-        
-        if log and new is None and branch != "":
-            log[-1]["new_branch"] = branch
-        prev = dict(rev=0, new_branch="")
-        url = repos_root
-        
-        for entry in reversed(log):
-            if prev["new_branch"] is not None:
-                if not repo["quiet"]:
-                    path = url[len(repos_root):]
-                    if not path:
-                        path = "/"
-                    stderr.writelines(("switching to ", path))
-                    stderr.flush()
-                ra.reparent(url)
-                if not repo["quiet"]:
-                    print(file=stderr)
-            
-            if entry["new_branch"] is not None:
-                url = repos_root + entry["new_branch"]
-            path = url[len(repos_root):]
-            
-            print("commit refs/{}".format(git_ref), file=repo["dump"])
-            
-            date = timegm(strptime(entry["date"][:19], "%Y-%m-%dT%H:%M:%S"))
-            
-            if authors is None:
-                author = ("{author} <{author}@{uuid}>".
-                    format(author=entry["author"], uuid=repo["uuid"]))
-            else:
-                author = author_map[entry["author"]]
-            
-            print("committer {} {} +0000".format(author, date),
-                file=repo["dump"])
-            
-            log = "{}\n\ngit-svn-id: {}{}@{} {}\n".format(
-                entry["log"], root, path, entry["rev"], repo["uuid"])
-            print("data", len(log), file=repo["dump"])
-            repo["dump"].write(log)
-            print(file=repo["dump"])
-            
-            if not prev["rev"] and base_rev:
-                print("from", git_ref, file=repo["dump"])
-            
-            if not repo["quiet"]:
-                stderr.write("{}@{}".format(path, entry["rev"]))
-                stderr.flush()
-            reporter = ra.do_diff(entry["rev"], "", url, RevEditor(repo),
-                True, True, True)
-            
-            if not repo["quiet"]:
-                stderr.write(":")
-                stderr.flush()
-            reporter.set_path("", prev["rev"], False)
-            reporter.finish()
-            # Assume the editor calls are all completed now
-            if not repo["quiet"]:
+            ra = RemoteAccess(url, auth=auth)
+            if not self.quiet:
                 print(file=stderr)
             
-            print(file=repo["dump"])
+            repos_root = ra.get_repos_root()
+            branch = url[len(repos_root):]
+            if root is None:
+                root = repos_root
             
-            prev = entry
+            self.uuid = ra.get_uuid()
+            
+            # If the log's starting revision is INVALID_REVNUM, Google Code
+            # seems to look up the path in the log's ending revision, which
+            # fails if it wasn't created then.
+            if end_rev == INVALID_REVNUM:
+                if not self.quiet:
+                    stderr.write("HEAD: ")
+                    stderr.flush()
+                end_rev = ra.get_latest_revnum()
+                if not self.quiet:
+                    print(end_rev, file=stderr)
+            
+            if end_rev == base_rev:
+                # Degenerate case because no revisions are actually in the
+                # range, but the log call would do a forwards log from
+                # revision N to N + 1.
+                return
+            
+            log_iter = ra.iter_log(paths=None,
+                start=end_rev, end=base_rev + 1,
+                strict_node_history=False, discover_changed_paths=True)
+            
+            # TODO: use "get_location_segments" instead
+            log = list()
+            while True:
+                if not self.quiet:
+                    stderr.write("revision ")
+                    stderr.flush()
+                try:
+                    (paths, rev, props, _) = next(log_iter)
+                except SubversionException as err:
+                    (msg, _) = err.args
+                    if not self.quiet:
+                        print(file=stderr)
+                    raise SystemExit(msg)
+                except StopIteration:
+                    if not self.quiet:
+                        print("(stopped)", file=stderr)
+                    break
+                
+                parent = len(branch)
+                # If the branch location changed, set "new" to the current
+                # branch location, and "src" to (a parent of) the previous
+                # location. If the location did not change, "new" is set to
+                # None.
+                while True:
+                    # At the root directory, this searches for the empty
+                    # string "" rather than "/". This should not matter
+                    # because the root directory cannot be moved from
+                    # anywhere.
+                    path = paths.get(branch[:parent])
+                    if path:
+                        (action, src, _, _) = path
+                        if src is not None or action in "AR":
+                            new = branch
+                            break
+                    
+                    parent = branch.rfind("/", 0, parent)
+                    if parent < 0:
+                        new = None
+                        break
+                
+                if new is None:
+                    if not self.quiet:
+                        print(rev, file=stderr)
+                elif src is None:
+                    if not self.quiet:
+                        print("{}: beginning of {}".format(rev, new),
+                            file=stderr)
+                else:
+                    branch = src + branch[parent:]
+                    if not self.quiet:
+                        print("{}: copied from {}".format(rev, branch),
+                            file=stderr)
+                    
+                    prefix = new + "/"
+                    if not any(path.startswith(prefix)
+                    for path in paths.keys()):
+                        # This revision is a simple branch copy without any
+                        # file changes. Do not generate a Git commit from it.
+                        if log and log[-1]["new_branch"] is None:
+                            log[-1]["new_branch"] = new
+                        continue
+                
+                log.append(dict(
+                    rev=rev,
+                    date=props[PROP_REVISION_DATE],
+                    author=props.get(PROP_REVISION_AUTHOR, "(no author)"),
+                    log = props[PROP_REVISION_LOG],
+                    new_branch=new,
+                ))
+                
+                if new is not None and src is None:
+                    break
+            # Make sure the underlying log call has completed
+            for _ in log_iter:
+                pass
+            
+            if log and new is None and branch != "":
+                log[-1]["new_branch"] = branch
+            prev = dict(rev=0, new_branch="")
+            url = repos_root
+            
+            for entry in reversed(log):
+                if prev["new_branch"] is not None:
+                    if not self.quiet:
+                        path = url[len(repos_root):]
+                        if not path:
+                            path = "/"
+                        stderr.writelines(("switching to ", path))
+                        stderr.flush()
+                    ra.reparent(url)
+                    if not self.quiet:
+                        print(file=stderr)
+                
+                if entry["new_branch"] is not None:
+                    url = repos_root + entry["new_branch"]
+                path = url[len(repos_root):]
+                
+                print("commit refs/{}".format(git_ref), file=self.dump)
+                
+                date = strptime(entry["date"][:19], "%Y-%m-%dT%H:%M:%S")
+                date = timegm(date)
+                
+                if author_map is None:
+                    author = ("{author} <{author}@{uuid}>".
+                        format(author=entry["author"], uuid=self.uuid))
+                else:
+                    author = author_map[entry["author"]]
+                
+                print("committer {} {} +0000".format(author, date),
+                    file=self.dump)
+                
+                log = "{}\n\ngit-svn-id: {}{}@{} {}\n".format(
+                    entry["log"], root, path, entry["rev"], self.uuid)
+                print("data", len(log), file=self.dump)
+                self.dump.write(log)
+                print(file=self.dump)
+                
+                if not prev["rev"] and base_rev:
+                    print("from", git_ref, file=self.dump)
+                
+                if not self.quiet:
+                    stderr.write("{}@{}".format(path, entry["rev"]))
+                    stderr.flush()
+                reporter = ra.do_diff(entry["rev"], "", url, RevEditor(self),
+                    True, True, True)
+                
+                if not self.quiet:
+                    stderr.write(":")
+                    stderr.flush()
+                reporter.set_path("", prev["rev"], False)
+                reporter.finish()
+                # Assume the editor calls are all completed now
+                if not self.quiet:
+                    print(file=stderr)
+                
+                print(file=self.dump)
+                
+                prev = entry
 
 class Editor(object):
     def __init__(self, repo):
@@ -268,25 +281,25 @@ class NodeEditor(Editor):
     change_prop = nop
 class DirEditor(NodeEditor):
     def add_directory(self, path):
-        if not self.repo["quiet"]:
+        if not self.repo.quiet:
             stderr.writelines(("\n  A ", path, "/"))
         return self
     def open_directory(self, path, base):
-        if not self.repo["quiet"]:
+        if not self.repo.quiet:
             stderr.writelines(("\n  M ", path, "/"))
         return self
     def add_file(self, path):
-        if not self.repo["quiet"]:
+        if not self.repo.quiet:
             stderr.writelines(("\n  A ", path))
         return FileEditor(path, bytes(), self.repo)
     def open_file(self, path, base):
-        if not self.repo["quiet"]:
+        if not self.repo.quiet:
             stderr.writelines(("\n  M ", path))
-        return FileEditor(path, self.repo["files"][path], self.repo)
+        return FileEditor(path, self.repo.files[path], self.repo)
     def delete_entry(self, path, rev):
-        if not self.repo["quiet"]:
+        if not self.repo.quiet:
             stderr.writelines(("\n  D ", path))
-        print("D", path, file=self.repo["dump"])
+        print("D", path, file=self.repo.dump)
 
 class FileEditor(NodeEditor):
     def __init__(self, path, sbuf, *args, **kw):
@@ -306,19 +319,19 @@ class DeltaWindowHandler(object):
     #~ @partial(traced, abbrev={1})
     def __call__(self, chunk):
         if chunk is None:
-            self.editor.repo["dump"].seek(0, SEEK_END)
+            self.editor.repo.dump.seek(0, SEEK_END)
             
             print("M 644 inline", self.editor.path,
-                file=self.editor.repo["dump"])
-            print("data", self.target_len, file=self.editor.repo["dump"])
+                file=self.editor.repo.dump)
+            print("data", self.target_len, file=self.editor.repo.dump)
             
-            self.editor.repo["files"][self.editor.path] = FileArray(
-                self.editor.repo["dump"], self.editor.repo["dump"].tell(),
+            self.editor.repo.files[self.editor.path] = FileArray(
+                self.editor.repo.dump, self.editor.repo.dump.tell(),
                 self.target_len)
             for chunk in self.target_chunks:
-                self.editor.repo["dump"].write(chunk)
+                self.editor.repo.dump.write(chunk)
             
-            print(file=self.editor.repo["dump"])
+            print(file=self.editor.repo.dump)
         
         else:
             chunk = apply_txdelta_window(self.editor.sbuf, chunk)
