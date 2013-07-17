@@ -58,11 +58,10 @@ revision="0:HEAD", authors=None):
     """
     
     (base_rev, end_rev) = revision.split(":")
-    base_rev = int(base_rev)
-    if end_rev.upper() == "HEAD":
-        end_rev = INVALID_REVNUM
-    else:
-        end_rev = int(end_rev)
+    base_rev = parse_svn_rev(base_rev)
+    end_rev = parse_svn_rev(end_rev)
+    if base_rev == INVALID_REVNUM or end_rev < base_rev:
+        (base_rev, end_rev) = (end_rev, base_rev)
     
     if authors is not None:
         author_map = dict()
@@ -294,6 +293,11 @@ class DeltaWindowHandler(object):
             chunk = apply_txdelta_window(self.editor.sbuf, chunk)
             self.target_chunks.append(chunk)
             self.target_len += len(chunk)
+
+def parse_svn_rev(rev):
+    if rev.upper() == "HEAD":
+        return INVALID_REVNUM
+    return int(rev)
 
 class FileArray(object):
     def __init__(self, file, pos, len):
