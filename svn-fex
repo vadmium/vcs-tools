@@ -248,6 +248,28 @@ class Repo(object):
                     url = repos_root + entry["new_branch"]
                 path = url[len(repos_root):]
                 
+                if not self.quiet:
+                    stderr.write("{}@{}:".format(path, entry["rev"]))
+                    stderr.flush()
+                editor = RevEditor(self.export, self.quiet)
+                
+                # Diff editor does not convey deletions when starting from
+                # scratch
+                if not prev["rev"]:
+                    dir = DirEditor(editor)
+                    for file in init_dels:
+                        dir.delete_entry(file)
+                
+                reporter = ra.do_diff(entry["rev"], "", url, editor,
+                    True, True, True)
+                
+                if not self.quiet:
+                    stderr.write(":")
+                    stderr.flush()
+                reporter.set_path("", prev["rev"], False)
+                reporter.finish()
+                # Assume the editor calls are all completed now
+                
                 print("commit refs/{}".format(git_ref),
                     file=self.export.file)
                 
@@ -272,33 +294,18 @@ class Repo(object):
                 if not prev["rev"] and base_rev:
                     print("from", git_ref, file=self.export.file)
                 
-                if not self.quiet:
-                    stderr.write("{}@{}:".format(path, entry["rev"]))
-                    stderr.flush()
-                
-                # Diff editor does not convey deletions when starting from
-                # scratch
-                if not prev["rev"]:
-                    dir = DirEditor(self)
-                    for file in init_dels:
-                        dir.delete_entry(file)
-                
-                reporter = ra.do_diff(entry["rev"], "", url, RevEditor(self),
-                    True, True, True)
-                
-                reporter.set_path("", prev["rev"], False)
-                reporter.finish()
-                # Assume the editor calls are all completed now
-                if not self.quiet:
-                    print(file=stderr)
-                
+                for args in editor.edits:
+                    print(*args, file=self.export.file)
                 print(file=self.export.file)
                 
+                if not self.quiet:
+                    print(file=stderr)
                 prev = entry
 
 class FastExport(object):
     def __init__(self, *pos, **kw):
         try:
+            self.marks = dict()
             self.open(*pos, **kw)
         except:
             self.__exit__(*exc_info())
@@ -308,13 +315,21 @@ class FastExport(object):
     def __enter__(self):
         return self
     
-    def filemodify(self, path, buf):
-        self.filemodify_header(path, buf)
+    def blob(self, path, buf):
+        blob = self.blob_header(path, buf)
         print(buf, file=self.file)
+        return blob
     
-    def filemodify_header(self, path, buf):
-        print("M 644 inline", path, file=self.file)
+    def blob_header(self, path, buf):
+        mark = self.marks.get(path)
+        if mark is None:
+            mark = ":{}".format(1 + len(self.marks))
+            self.marks[path] = mark
+        
+        print("blob", file=self.file)
+        print("mark", mark, file=self.file)
         print("data", len(buf), file=self.file)
+        return mark
 
 class FastExportFile(FastExport):
     def __init__(self, file):
@@ -326,14 +341,16 @@ class FastExportFile(FastExport):
     def __exit__(self, *exc):
         self.file.close()
     
-    def filemodify(self, path, buf):
+    def blob(self, path, buf):
         self.file.seek(0, SEEK_END)
-        self.filemodify_header(path, buf)
-        self.files[path] = FileArray(self.file, self.file.tell(), len(buf))
+        blob = self.blob_header(path, buf)
+        filedata = FileArray(self.file, self.file.tell(), len(buf))
+        self.files[path] = filedata
         print(buf, file=self.file)
+        return blob
     
     def __getitem__(self, path):
-        return self.files[path]
+        return (self.files[path], self.marks[path])
 
 class FastExportPipe(FastExport):
     def __init__(self, importer):
@@ -344,7 +361,6 @@ class FastExportPipe(FastExport):
         self.file = self.proc.stdin
         print("feature done", file=self.file)
         print("feature cat-blob", file=self.file)
-        print("feature ls", file=self.file)
     
     def __exit__(self, type, value, traceback):
         try:
@@ -373,77 +389,79 @@ class FastExportPipe(FastExport):
                 raise SystemExit(returncode)
     
     def __getitem__(self, path):
-        path = path.replace("\\", r"\\")
-        path = path.replace('"', r'\"').replace("\n", r"\n")
-        print('ls "{}"'.format(path), file=self.file)
-        self.file.flush()
-        blob = self.proc.stdout.readline()
-        blob = blob.split(" ", 2)[2].split("\t", 1)[0]
+        blob = self.marks[path]
         print("cat-blob", blob, file=self.file)
         self.file.flush()
         size = int(self.proc.stdout.readline().split(" ", 3)[2])
-        blob = self.proc.stdout.read(size)
+        data = self.proc.stdout.read(size)
         self.proc.stdout.readline()
-        return blob
+        return (data, blob)
 
 class Editor(object):
-    def __init__(self, repo):
-        self.repo = repo
     def close(self):
         pass
 class RevEditor(Editor):
+    def __init__(self, export, quiet):
+        self.export = export
+        self.quiet = quiet
+        self.edits = list()
     def set_target_revision(self, rev):
         pass
     def open_root(self, base):
-        return DirEditor(self.repo)
+        return DirEditor(self)
     def abort(self):
         pass
 
 class NodeEditor(Editor):
+    def __init__(self, rev):
+        self.rev = rev
     def change_prop(self, name, value):
         pass
 class DirEditor(NodeEditor):
     def add_directory(self, path):
-        if not self.repo.quiet:
+        if not self.rev.quiet:
             stderr.writelines(("\n  A ", path, "/"))
         return self
     def open_directory(self, path, base):
-        if not self.repo.quiet:
+        if not self.rev.quiet:
             stderr.writelines(("\n  M ", path, "/"))
         return self
     def add_file(self, path):
-        if not self.repo.quiet:
+        if not self.rev.quiet:
             stderr.writelines(("\n  A ", path))
-        return FileEditor(path, bytes(), self.repo)
+        return FileEditor(path, self.rev)
     def open_file(self, path, base):
-        if not self.repo.quiet:
+        if not self.rev.quiet:
             stderr.writelines(("\n  M ", path))
-        return FileEditor(path, self.repo.export[path], self.repo)
+        return FileEditor(path, self.rev, original=self.rev.export[path])
     def delete_entry(self, path, rev=None):
-        if not self.repo.quiet:
+        if not self.rev.quiet:
             stderr.writelines(("\n  D ", path))
-        print("D", path, file=self.repo.export.file)
+        self.rev.edits.append(("D", path))
 
 class FileEditor(NodeEditor):
-    def __init__(self, path, sbuf, *args, **kw):
-        NodeEditor.__init__(self, *args, **kw)
+    def __init__(self, path, rev, original=(bytes(), None)):
+        NodeEditor.__init__(self, rev)
         self.path = path
-        self.sbuf = sbuf
+        (self.sbuf, self.blob) = original
     
     def apply_textdelta(self, base_sum):
         return DeltaWindowHandler(self)
+    
+    def close(self):
+        self.rev.edits.append(("M 644", self.blob, self.path))
 
 class DeltaWindowHandler(object):
-    def __init__(self, editor):
-        self.editor = editor
+    def __init__(self, file):
+        self.file = file
         self.target_buf = bytearray()
     
     def __call__(self, chunk):
         if chunk is None:
-            self.editor.repo.export.filemodify(self.editor.path,
+            self.file.blob = self.file.rev.export.blob(self.file.path,
                 self.target_buf)
         else:
-            chunk = apply_txdelta_window(self.editor.sbuf, chunk)
+            chunk = apply_txdelta_window(self.file.sbuf, chunk)
             self.target_buf.extend(chunk)
 
 def parse_svn_rev(rev):
