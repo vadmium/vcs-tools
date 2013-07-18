@@ -17,7 +17,7 @@ It does not:
 
 * handle or correlate multiple trunks, branches, or tags
 * take account of any kind of Subversion merge tracking
-* handle special kinds of files (symbolic links, executables)
+* handle symbolic links, although it does handle executable files
 * do anything with special Subversion file or revision properties
 """
 
@@ -29,6 +29,7 @@ from subvertpy.properties import (
     PROP_REVISION_DATE,
     PROP_REVISION_AUTHOR,
     PROP_REVISION_LOG,
+    PROP_EXECUTABLE,
 )
 from sys import stderr, argv, exc_info
 from time import strptime
@@ -305,7 +306,7 @@ class Repo(object):
 class FastExport(object):
     def __init__(self, *pos, **kw):
         try:
-            self.marks = dict()
+            self.files = dict()
             self.open(*pos, **kw)
         except:
             self.__exit__(*exc_info())
@@ -321,19 +322,24 @@ class FastExport(object):
         return blob
     
     def blob_header(self, path, buf):
-        mark = self.marks.get(path)
+        (mark, _) = self.files.get(path, (None, None))
         if mark is None:
-            mark = ":{}".format(1 + len(self.marks))
-            self.marks[path] = mark
+            mark = ":{}".format(1 + len(self.files))
+            self.files[path] = (mark,)
         
         print("blob", file=self.file)
         print("mark", mark, file=self.file)
         print("data", len(buf), file=self.file)
         return mark
+    
+    def __setitem__(self, path, value):
+        self.files[path] = value
+    def __getitem__(self, path):
+        return self.files[path]
 
 class FastExportFile(FastExport):
     def __init__(self, file):
-        self.files = dict()
+        self.filedata = dict()
         self.file = open(file, "w+b")
         FastExport.__init__(self)
     def open(self):
@@ -345,12 +351,12 @@ class FastExportFile(FastExport):
         self.file.seek(0, SEEK_END)
         blob = self.blob_header(path, buf)
         filedata = FileArray(self.file, self.file.tell(), len(buf))
-        self.files[path] = filedata
+        self.filedata[blob] = filedata
         print(buf, file=self.file)
         return blob
     
-    def __getitem__(self, path):
-        return (self.files[path], self.marks[path])
+    def cat_blob(self, blob):
+        return self.filedata[blob]
 
 class FastExportPipe(FastExport):
     def __init__(self, importer):
@@ -388,14 +394,13 @@ class FastExportPipe(FastExport):
             and value.errno == EPIPE) and returncode:
                 raise SystemExit(returncode)
     
-    def __getitem__(self, path):
-        blob = self.marks[path]
+    def cat_blob(self, blob):
         print("cat-blob", blob, file=self.file)
         self.file.flush()
         size = int(self.proc.stdout.readline().split(" ", 3)[2])
         data = self.proc.stdout.read(size)
         self.proc.stdout.readline()
-        return (data, blob)
+        return data
 
 class Editor(object):
     def close(self):
@@ -440,20 +445,32 @@ class DirEditor(NodeEditor):
         self.rev.edits.append(("D", path))
 
 class FileEditor(NodeEditor):
-    def __init__(self, path, rev, original=(bytes(), None)):
+    def __init__(self, path, rev, original=(None, "644")):
         NodeEditor.__init__(self, rev)
         self.path = path
-        (self.sbuf, self.blob) = original
+        (self.blob, self.mode) = original
+    
+    def change_prop(self, name, value):
+        if name == PROP_EXECUTABLE:
+            if value:
+                self.mode = "755"
+            else:
+                self.mode = "644"
     
     def apply_textdelta(self, base_sum):
         return DeltaWindowHandler(self)
     
     def close(self):
-        self.rev.edits.append(("M 644", self.blob, self.path))
+        self.rev.export[self.path] = (self.blob, self.mode)
+        self.rev.edits.append(("M", self.mode, self.blob, self.path))
 
 class DeltaWindowHandler(object):
     def __init__(self, file):
         self.file = file
+        if self.file.blob:
+            self.sbuf = self.file.rev.export.cat_blob(self.file.blob)
+        else:
+            self.sbuf = bytes()
         self.target_buf = bytearray()
     
     def __call__(self, chunk):
@@ -461,7 +478,7 @@ class DeltaWindowHandler(object):
             self.file.blob = self.file.rev.export.blob(self.file.path,
                 self.target_buf)
         else:
-            chunk = apply_txdelta_window(self.file.sbuf, chunk)
+            chunk = apply_txdelta_window(self.sbuf, chunk)
             self.target_buf.extend(chunk)
 
 def parse_svn_rev(rev):
