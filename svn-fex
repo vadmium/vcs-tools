@@ -60,7 +60,8 @@ revision="0:HEAD", authors=None):
     (base_rev, end_rev) = revision.split(":")
     base_rev = parse_svn_rev(base_rev)
     end_rev = parse_svn_rev(end_rev)
-    if base_rev == INVALID_REVNUM or end_rev < base_rev:
+    if (base_rev == INVALID_REVNUM or
+    end_rev != INVALID_REVNUM and end_rev < base_rev):
         (base_rev, end_rev) = (end_rev, base_rev)
     
     if authors is not None:
