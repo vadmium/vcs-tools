@@ -48,7 +48,7 @@ def main():
     parser = argparse.ArgumentParser(description=summary)
     
     parser.add_argument("url", help="subversion URL")
-    parser.add_argument("--dump", metavar="FILENAME",
+    parser.add_argument("--file", metavar="FILENAME",
         help="fast import file")
     parser.add_argument("importer", nargs="*",
         help="command which is piped the fast import stream")
@@ -85,7 +85,7 @@ def main():
     else:
         author_map = None
     
-    Repo(args.url, args.git_ref, dump=args.dump, importer=args.importer,
+    Repo(args.url, args.git_ref, file=args.file, importer=args.importer,
         base_rev=base_rev, end_rev=end_rev,
         author_map=author_map,
         root=args.rewrite_root,
@@ -93,7 +93,7 @@ def main():
     )
 
 class Repo(object):
-    def __init__(self, url, git_ref, dump=None, importer=(),
+    def __init__(self, url, git_ref, file=None, importer=(),
         base_rev=0, end_rev=INVALID_REVNUM,
         author_map=None,
         root=None,
@@ -104,7 +104,7 @@ class Repo(object):
         if importer:
             self.export = FastExportPipe(importer)
         else:
-            self.export = FastExportFile(dump)
+            self.export = FastExportFile(file)
         with self.export:
             # Auth stuff avoids the following error for diffs on local
             # (file://) URLs: "No provider registered for 'svn.username'
@@ -249,7 +249,7 @@ class Repo(object):
                 path = url[len(repos_root):]
                 
                 print("commit refs/{}".format(git_ref),
-                    file=self.export.dump)
+                    file=self.export.file)
                 
                 date = strptime(entry["date"][:19], "%Y-%m-%dT%H:%M:%S")
                 date = timegm(date)
@@ -261,16 +261,16 @@ class Repo(object):
                     author = author_map[entry["author"]]
                 
                 print("committer {} {} +0000".format(author, date),
-                    file=self.export.dump)
+                    file=self.export.file)
                 
                 log = "{}\n\ngit-svn-id: {}{}@{} {}\n".format(
                     entry["log"], root, path, entry["rev"], self.uuid)
-                print("data", len(log), file=self.export.dump)
-                self.export.dump.write(log)
-                print(file=self.export.dump)
+                print("data", len(log), file=self.export.file)
+                self.export.file.write(log)
+                print(file=self.export.file)
                 
                 if not prev["rev"] and base_rev:
-                    print("from", git_ref, file=self.export.dump)
+                    print("from", git_ref, file=self.export.file)
                 
                 if not self.quiet:
                     stderr.write("{}@{}:".format(path, entry["rev"]))
@@ -292,7 +292,7 @@ class Repo(object):
                 if not self.quiet:
                     print(file=stderr)
                 
-                print(file=self.export.dump)
+                print(file=self.export.file)
                 
                 prev = entry
 
@@ -309,26 +309,26 @@ class FastExport(object):
         return self
 
 class FastExportFile(FastExport):
-    def __init__(self, dump):
+    def __init__(self, file):
         self.files = dict()
-        self.dump = open(dump, "w+b")
+        self.file = open(file, "w+b")
         FastExport.__init__(self)
     def open(self):
-        self.dump.tell()  # Make sure it is seekable
+        self.file.tell()  # Make sure it is seekable
     def __exit__(self, *exc):
-        self.dump.close()
+        self.file.close()
     
     def filemodify(self, path, len, chunks):
-        self.dump.seek(0, SEEK_END)
+        self.file.seek(0, SEEK_END)
         
-        print("M 644 inline", path, file=self.dump)
-        print("data", len, file=self.dump)
+        print("M 644 inline", path, file=self.file)
+        print("data", len, file=self.file)
         
-        self.files[path] = FileArray(self.dump, self.dump.tell(), len)
+        self.files[path] = FileArray(self.file, self.file.tell(), len)
         for chunk in chunks:
-            self.dump.write(chunk)
+            self.file.write(chunk)
         
-        print(file=self.dump)
+        print(file=self.file)
     
     def __getitem__(self, path):
         return self.files[path]
@@ -339,15 +339,15 @@ class FastExportPipe(FastExport):
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, bufsize=-1)
         FastExport.__init__(self)
     def open(self):
-        self.dump = self.proc.stdin
-        print("feature done", file=self.dump)
-        print("feature cat-blob", file=self.dump)
-        print("feature ls", file=self.dump)
+        self.file = self.proc.stdin
+        print("feature done", file=self.file)
+        print("feature cat-blob", file=self.file)
+        print("feature ls", file=self.file)
     
     def __exit__(self, type, value, traceback):
         try:
             if not value:
-                print("done", file=self.dump)
+                print("done", file=self.file)
         except BaseException as err:
             value = err
         finally:
@@ -371,21 +371,21 @@ class FastExportPipe(FastExport):
                 raise SystemExit(returncode)
     
     def filemodify(self, path, len, chunks):
-        print("M 644 inline", path, file=self.dump)
-        print("data", len, file=self.dump)
+        print("M 644 inline", path, file=self.file)
+        print("data", len, file=self.file)
         for chunk in chunks:
-            self.dump.write(chunk)
-        print(file=self.dump)
+            self.file.write(chunk)
+        print(file=self.file)
     
     def __getitem__(self, path):
         path = path.replace("\\", r"\\")
         path = path.replace('"', r'\"').replace("\n", r"\n")
-        print('ls "{}"'.format(path), file=self.dump)
-        self.dump.flush()
+        print('ls "{}"'.format(path), file=self.file)
+        self.file.flush()
         blob = self.proc.stdout.readline()
         blob = blob.split(" ", 2)[2].split("\t", 1)[0]
-        print("cat-blob", blob, file=self.dump)
-        self.dump.flush()
+        print("cat-blob", blob, file=self.file)
+        self.file.flush()
         size = int(self.proc.stdout.readline().split(" ", 3)[2])
         blob = self.proc.stdout.read(size)
         self.proc.stdout.readline()
@@ -427,7 +427,7 @@ class DirEditor(NodeEditor):
     def delete_entry(self, path, rev=None):
         if not self.repo.quiet:
             stderr.writelines(("\n  D ", path))
-        print("D", path, file=self.repo.export.dump)
+        print("D", path, file=self.repo.export.file)
 
 class FileEditor(NodeEditor):
     def __init__(self, path, sbuf, *args, **kw):

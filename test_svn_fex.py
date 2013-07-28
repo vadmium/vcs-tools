@@ -74,7 +74,7 @@ class Test(TestCase):
         ))
         url = "file://{}/trunk".format(pathname2url(repo))
         export = os.path.join(self.dir, "export")
-        self.svn_fex["Repo"](url, "ref", dump=export, root="", quiet=True)
+        self.svn_fex["Repo"](url, "ref", file=export, root="", quiet=True)
         with open(export, "rb") as export:
             self.assertMultiLineEqual(export.read(), b"""\
 commit refs/ref
@@ -105,7 +105,7 @@ git-svn-id: /trunk@2 00000000-0000-0000-0000-000000000000
         url = "file://{}".format(pathname2url(repo))
         export = os.path.join(self.dir, "export")
         authors = {"user": "user <user>"}
-        self.svn_fex["Repo"](url, "ref", dump=export, author_map=authors,
+        self.svn_fex["Repo"](url, "ref", file=export, author_map=authors,
             quiet=True)
     
     def test_first_delete(self):
@@ -116,7 +116,7 @@ git-svn-id: /trunk@2 00000000-0000-0000-0000-000000000000
         ))
         url = "file://{}".format(pathname2url(repo))
         export = os.path.join(self.dir, "export")
-        self.svn_fex["Repo"](url, "ref", dump=export, root="", base_rev=1,
+        self.svn_fex["Repo"](url, "ref", file=export, root="", base_rev=1,
             quiet=True)
         with open(export, "rb") as export:
             self.assertMultiLineEqual(export.read(), b"""\
