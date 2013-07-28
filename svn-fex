@@ -307,6 +307,14 @@ class FastExport(object):
         pass
     def __enter__(self):
         return self
+    
+    def filemodify(self, path, buf):
+        self.filemodify_header(path, buf)
+        print(buf, file=self.file)
+    
+    def filemodify_header(self, path, buf):
+        print("M 644 inline", path, file=self.file)
+        print("data", len(buf), file=self.file)
 
 class FastExportFile(FastExport):
     def __init__(self, file):
@@ -318,17 +326,11 @@ class FastExportFile(FastExport):
     def __exit__(self, *exc):
         self.file.close()
     
-    def filemodify(self, path, len, chunks):
+    def filemodify(self, path, buf):
         self.file.seek(0, SEEK_END)
-        
-        print("M 644 inline", path, file=self.file)
-        print("data", len, file=self.file)
-        
-        self.files[path] = FileArray(self.file, self.file.tell(), len)
-        for chunk in chunks:
-            self.file.write(chunk)
-        
-        print(file=self.file)
+        self.filemodify_header(path, buf)
+        self.files[path] = FileArray(self.file, self.file.tell(), len(buf))
+        print(buf, file=self.file)
     
     def __getitem__(self, path):
         return self.files[path]
@@ -369,13 +371,6 @@ class FastExportPipe(FastExport):
             if (not value or isinstance(value, EnvironmentError)
             and value.errno == EPIPE) and returncode:
                 raise SystemExit(returncode)
-    
-    def filemodify(self, path, len, chunks):
-        print("M 644 inline", path, file=self.file)
-        print("data", len, file=self.file)
-        for chunk in chunks:
-            self.file.write(chunk)
-        print(file=self.file)
     
     def __getitem__(self, path):
         path = path.replace("\\", r"\\")
@@ -441,17 +436,15 @@ class FileEditor(NodeEditor):
 class DeltaWindowHandler(object):
     def __init__(self, editor):
         self.editor = editor
-        self.target_chunks = list()
-        self.target_len = 0
+        self.target_buf = bytearray()
     
     def __call__(self, chunk):
         if chunk is None:
             self.editor.repo.export.filemodify(self.editor.path,
-                self.target_len, self.target_chunks)
+                self.target_buf)
         else:
             chunk = apply_txdelta_window(self.editor.sbuf, chunk)
-            self.target_chunks.append(chunk)
-            self.target_len += len(chunk)
+            self.target_buf.extend(chunk)
 
 def parse_svn_rev(rev):
     if rev.upper() == "HEAD":
