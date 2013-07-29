@@ -141,6 +141,9 @@ revision="0:HEAD", authors=None, root=None, quiet=False):
             # location, and "src" to (a parent of) the previous location. If
             # the location did not change, "new" is set to None.
             while True:
+                # At the root directory, this searches for the empty string
+                # "" rather than "/". This should not matter because the root
+                # directory cannot be moved from anywhere.
                 path = paths.get(branch[:parent])
                 if path:
                     (action, src, _, _) = path
