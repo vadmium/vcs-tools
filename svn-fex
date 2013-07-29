@@ -326,7 +326,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=summary)
     parser.add_argument("url", help="subversion URL")
     parser.add_argument("dump", help="fast import file")
-    parser.add_argument("git-ref",
+    parser.add_argument("git_ref",
         help='should include everything that follows the "refs/" prefix')
     parser.add_argument("-r", "--revision", metavar="BASE:END",
         default="0:HEAD", help="""subversion revisions to look up (default:
