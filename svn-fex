@@ -102,20 +102,10 @@ class Repo(object):
                 ra = RemoteAccess(url, auth=auth)
             
             repos_root = ra.get_repos_root()
-            branch = url[len(repos_root):]
             if root is None:
                 root = repos_root
             
             self.uuid = ra.get_uuid()
-            
-            # If the log's starting revision is INVALID_REVNUM, Google Code
-            # seems to look up the path in the log's ending revision, which
-            # fails if it wasn't created then.
-            if end_rev == INVALID_REVNUM:
-                with progress("HEAD: "):
-                    end_rev = ra.get_latest_revnum()
-                    if not self.quiet:
-                        stderr.write(format(end_rev))
             
             if end_rev == base_rev:
                 # RemoteAccess.get_location_segments() does not support an
@@ -128,141 +118,123 @@ class Repo(object):
                 ra.get_location_segments("", end_rev, end_rev, base_rev + 1,
                     self.on_location)
             
-            log_iter = ra.iter_log(paths=None,
-                start=end_rev, end=base_rev + 1,
-                strict_node_history=False, discover_changed_paths=True)
+            # Not using RemoteAccess.get_file_revs() because it does not work
+            # on directories
             
-            log = list()
-            while True:
-                with progress("revision "):
-                    try:
-                        (paths, rev, props) = next(log_iter)[:3]
-                    except SubversionException as err:
-                        (msg, _) = err.args
-                        raise SystemExit(msg)
-                    except StopIteration:
-                        if not self.quiet:
-                            stderr.write("(stopped)")
-                        break
-                    
-                    prefix = branch.rstrip("/") + "/"
-                    init_dels = list()
-                    for (file, (action, _, _, _)) in paths.items():
-                        if file.startswith(prefix) and action in "DR":
-                            init_dels.append(file[len(prefix):])
-                    
-                    parent = len(branch)
-                    # If the branch location changed, set "new" to the
-                    # current branch location, and "src" to (a parent of) the
-                    # previous location. If the location did not change,
-                    # "new" is set to None.
-                    while True:
-                        # At the root directory, this searches for the empty
-                        # string "" rather than "/". This should not matter
-                        # because the root directory cannot be moved from
-                        # anywhere.
-                        path = paths.get(branch[:parent])
-                        if path:
-                            (action, src, _, _) = path
-                            if src is not None or action in "AR":
-                                new = branch
-                                break
-                        
-                        parent = branch.rfind("/", 0, parent)
-                        if parent < 0:
-                            new = None
-                            break
-                    
-                    if new is None:
-                        msg = format(rev)
-                    elif src is None:
-                        msg = "{}: beginning of {}".format(rev, new)
-                    else:
-                        branch = src + branch[parent:]
-                        msg = "{}: copied from {}".format(rev, branch)
-                        
-                        if not any(path.startswith(prefix)
-                        for path in paths.keys()):
-                            # This revision is a simple branch copy without
-                            # any file changes. Do not generate a Git commit
-                            # from it.
-                            if log and log[-1]["new_branch"] is None:
-                                log[-1]["new_branch"] = new
-                            continue
-                    if not self.quiet:
-                        stderr.write(msg)
-                
-                log.append(dict(
-                    rev=rev,
-                    date=props[PROP_REVISION_DATE],
-                    author=props.get(PROP_REVISION_AUTHOR, "(no author)"),
-                    log = props[PROP_REVISION_LOG],
-                    new_branch=new,
-                ))
-                
-                if new is not None and src is None:
-                    break
-            # Make sure the underlying log call has completed
-            for _ in log_iter:
-                pass
+            # TODO: Use RemoteAccess.replay_range() for initial location
+            # segment and trailing parts of subsequent segments. Would
+            # require remembering all versions of files received.
             
-            if log and new is None and branch != "":
-                log[-1]["new_branch"] = branch
-            prev = dict(rev=0, new_branch="")
-            url = repos_root
-            
-            for entry in reversed(log):
-                if prev["new_branch"] is not None:
-                    path = url[len(repos_root):]
-                    if not path:
-                        path = "/"
-                    with progress("switching to ", path):
-                        ra.reparent(url)
-                
-                if entry["new_branch"] is not None:
-                    url = repos_root + entry["new_branch"]
-                path = url[len(repos_root):]
-                
-                print("commit refs/{}".format(git_ref), file=self.dump)
-                
-                date = strptime(entry["date"][:19], "%Y-%m-%dT%H:%M:%S")
-                date = timegm(date)
-                
-                if author_map is None:
-                    author = ("{author} <{author}@{uuid}>".
-                        format(author=entry["author"], uuid=self.uuid))
+            prev_rev = None
+            for (self.rev, end, path) in reversed(self.locations):
+                if path:
+                    new_url = "{}/{}".format(repos_root, path)
                 else:
-                    author = author_map[entry["author"]]
+                    new_url = repos_root
+                path = "/" + path
+                while self.rev < end:
+                    with progress(path):
+                        if url != new_url:
+                            ra.reparent(new_url)
+                            url = new_url
+                        
+                        if not self.quiet:
+                            stderr.write("@")
+                            stderr.flush()
+                        next = self.rev + 1
+                        self.rev = None
+                        ra.get_log(self.on_revision, paths=None,
+                            start=next, end=end, limit=1,
+                            # TODO: Changed paths only needed for the first
+                            # revision in each segment
+                            discover_changed_paths=True)
+                        if self.rev is None:
+                            if not self.quiet:
+                                stderr.write("(none)")
+                            break
+                        if not self.quiet:
+                            stderr.write(format(self.rev))
+                            stderr.flush()
+                        
+                        # Do not generate a Git commit from a simple
+                        # unmodified branch copy
+                        prefix = path.rstrip("/") + "/"
+                        if not any(path.startswith(prefix) and path != prefix
+                        for path in self.paths.keys()):
+                            default = (None, None, None)
+                            (_, src, _) = self.paths.get(path, default)
+                            if src is not None:
+                                continue
+                        
+                        print("commit refs/{}".format(git_ref),
+                            file=self.dump)
+                        
+                        date = strptime(self.date[:19], "%Y-%m-%dT%H:%M:%S")
+                        date = timegm(date)
+                        
+                        if author_map is None:
+                            author = ("{0.author} <{0.author}@{0.uuid}>".
+                                format(self))
+                        else:
+                            author = author_map[self.author]
+                        
+                        print("committer {} {} +0000".format(author, date),
+                            file=self.dump)
+                        
+                        log = "{}\n\ngit-svn-id: {}{}@{} {}\n".format(
+                            self.log, root, path.rstrip("/"), self.rev,
+                            self.uuid)
+                        print("data", len(log), file=self.dump)
+                        self.dump.write(log)
+                        print(file=self.dump)
+                        
+                        if prev_rev is None and base_rev:
+                            print("from", git_ref, file=self.dump)
+                        
+                        if prev_rev is not None and prev_url is not None:
+                            # This is not the first exported revision, and
+                            # the previous one was at a different branch
+                            # location. Will have to diff the previous
+                            # location against the current location. Have to
+                            # switch root because the diff reporter does not
+                            # accept link_path() on the top-level directory.
+                            ra.reparent(prev_url)
+                            url = prev_url
+                        
+                        if not self.quiet:
+                            stderr.write(":")
+                            stderr.flush()
+                        editor = RevEditor(self)
+                        
+                        # Diff editor does not convey deletions when starting
+                        # from scratch
+                        if prev_rev is None:
+                            dir = DirEditor(self)
+                            for (file, (action, _, _)) in self.paths.items():
+                                if (file.startswith(prefix) and
+                                action in "DR"):
+                                    dir.delete_entry(file[len(prefix):])
+                        
+                        reporter = ra.do_diff(self.rev, "", new_url, editor,
+                            True, True, True)
+                        
+                        # Reporter.set_path(path, revision, start_empty)
+                        if prev_rev is None:
+                            reporter.set_path("", self.rev, True)
+                        else:
+                            reporter.set_path("", prev_rev, False)
+                        reporter.finish()
+                        # Assume the editor calls are all completed now
+                        print(file=self.dump)
+                        
+                        prev_rev = self.rev
+                        
+                        # Last exported location is current location
+                        prev_url = None
                 
-                print("committer {} {} +0000".format(author, date),
-                    file=self.dump)
-                
-                log = "{}\n\ngit-svn-id: {}{}@{} {}\n".format(
-                    entry["log"], root, path, entry["rev"], self.uuid)
-                print("data", len(log), file=self.dump)
-                self.dump.write(log)
-                print(file=self.dump)
-                
-                if not prev["rev"] and base_rev:
-                    print("from", git_ref, file=self.dump)
-                
-                with progress("{}@{}:".format(path, entry["rev"])):
-                    # Diff editor does not convey deletions when starting
-                    # from scratch
-                    if not prev["rev"]:
-                        dir = DirEditor(self)
-                        for file in init_dels:
-                            dir.delete_entry(file)
-                    
-                    reporter = ra.do_diff(entry["rev"], "", url,
-                        RevEditor(self), True, True, True)
-                    reporter.set_path("", prev["rev"], False)
-                    reporter.finish()
-                    # Assume the editor calls are all completed now
-                
-                print(file=self.dump)
-                
-                prev = entry
+                # Save URL of last location that was exported
+                if prev_rev is not None and prev_url is None:
+                    prev_url = new_url
     
     def on_location(self, start, end, path):
         if path is None:
@@ -270,6 +242,13 @@ class Repo(object):
         if not self.quiet:
             stderr.write("\n  /{}:{}-{}".format(path, start, end))
         self.locations.append((start - 1, end, path))
+    
+    def on_revision(self, paths, rev, props, children=False):
+        self.paths = paths
+        self.rev = rev
+        self.date = props[PROP_REVISION_DATE]
+        self.author = props.get(PROP_REVISION_AUTHOR, "(no author)")
+        self.log = props[PROP_REVISION_LOG]
 
 class Editor(object):
     def __init__(self, repo):
