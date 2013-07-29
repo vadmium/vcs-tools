@@ -316,7 +316,7 @@ class FileArray(object):
             self.file, self.pos, self.len)
 
 if __name__ == "__main__":
-    (summary, _) = splitdoc(main)
+    (summary, _) = splitdoc(main.__doc__)
     parser = argparse.ArgumentParser(description=summary)
     parser.add_argument("url", help="subversion URL")
     parser.add_argument("dump", help="fast import file")
