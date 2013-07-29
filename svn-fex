@@ -137,18 +137,19 @@ revision="0:HEAD", authors=None, root=None, quiet=False):
                 break
             
             parent = len(branch)
+            # If the branch location changed, set "new" to the current branch
+            # location, and "src" to (a parent of) the previous location. If
+            # the location did not change, "new" is set to None.
             while True:
-                try:
-                    (_, src, _, _) = paths[branch[:parent]]
-                except LookupError:
-                    pass
-                else:
-                    new = branch
-                    break
+                path = paths.get(branch[:parent])
+                if path:
+                    (action, src, _, _) = path
+                    if src is not None or action in "AR":
+                        new = branch
+                        break
                 
-                try:
-                    parent = branch.rindex("/", 0, parent)
-                except ValueError:
+                parent = branch.rfind("/", 0, parent)
+                if parent < 0:
                     new = None
                     break
             
