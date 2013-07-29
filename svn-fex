@@ -118,16 +118,20 @@ class Repo(object):
                         stderr.write(format(end_rev))
             
             if end_rev == base_rev:
-                # Degenerate case because no revisions are actually in the
-                # range, but the log call would do a forwards log from
-                # revision N to N + 1.
+                # RemoteAccess.get_location_segments() does not support an
+                # empty range, so handle this as a special case. Also, HEAD:
+                # HEAD would be interpreted as the entire history.
                 return
+            
+            self.locations = list()
+            with progress("location history:"):
+                ra.get_location_segments("", end_rev, end_rev, base_rev + 1,
+                    self.on_location)
             
             log_iter = ra.iter_log(paths=None,
                 start=end_rev, end=base_rev + 1,
                 strict_node_history=False, discover_changed_paths=True)
             
-            # TODO: use "get_location_segments" instead
             log = list()
             while True:
                 with progress("revision "):
@@ -259,6 +263,13 @@ class Repo(object):
                 print(file=self.dump)
                 
                 prev = entry
+    
+    def on_location(self, start, end, path):
+        if path is None:
+            return
+        if not self.quiet:
+            stderr.write("\n  /{}:{}-{}".format(path, start, end))
+        self.locations.append((start - 1, end, path))
 
 class Editor(object):
     def __init__(self, repo):
