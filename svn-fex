@@ -45,7 +45,7 @@ from funcparams import splitdoc
 INVALID_REVNUM = -1
 
 def main(url, dump, git_ref,
-revision="0:HEAD", authors=None):
+revision="0:HEAD", authors=None, quiet=False):
     """Transform Subversion revisions to Git's "fast-import" format
     
     url  Subversion URL
@@ -55,6 +55,7 @@ revision="0:HEAD", authors=None):
         does not begin at zero, the existing Git branch is assumed to match.
     authors  File mapping Subversion user names to Git authors, like "git-
         svn"
+    quiet  Suppress progress messages
     """
     
     (base_rev, end_rev) = revision.split(":")
@@ -73,7 +74,7 @@ revision="0:HEAD", authors=None):
                 (svn, git) = line.split(" = ", 1)
                 author_map[svn] = git
     
-    repo = dict(files=dict())
+    repo = dict(files=dict(), quiet=quiet)
     uuid_url = True
     
     with open(dump, "w+b") as repo["dump"]:
@@ -83,10 +84,12 @@ revision="0:HEAD", authors=None):
         # URLs: "No provider registered for 'svn.username' credentials"
         auth = Auth((get_username_provider(),))
         
-        stderr.writelines(("connecting to ", url))
-        stderr.flush()
+        if not repo["quiet"]:
+            stderr.writelines(("connecting to ", url))
+            stderr.flush()
         ra = RemoteAccess(url, auth=auth)
-        print(file=stderr)
+        if not repo["quiet"]:
+            print(file=stderr)
         
         repos_root = ra.get_repos_root()
         branch = url[len(repos_root):]
@@ -97,10 +100,12 @@ revision="0:HEAD", authors=None):
         # to look up the path in the log's ending revision, which fails if it
         # wasn't created then.
         if end_rev == INVALID_REVNUM:
-            stderr.write("HEAD: ")
-            stderr.flush()
+            if not repo["quiet"]:
+                stderr.write("HEAD: ")
+                stderr.flush()
             end_rev = ra.get_latest_revnum()
-            print(end_rev, file=stderr)
+            if not repo["quiet"]:
+                print(end_rev, file=stderr)
         
         if end_rev == base_rev:
             # Degenerate case because no revisions are actually in the
@@ -114,16 +119,19 @@ revision="0:HEAD", authors=None):
         # TODO: use "get_location_segments" instead
         log = list()
         while True:
-            stderr.write("revision ")
-            stderr.flush()
+            if not repo["quiet"]:
+                stderr.write("revision ")
+                stderr.flush()
             try:
                 (paths, rev, props, _) = next(log_iter)
             except SubversionException as err:
                 (msg, _) = err.args
-                print(file=stderr)
+                if not repo["quiet"]:
+                    print(file=stderr)
                 raise SystemExit(msg)
             except StopIteration:
-                print("(stopped)", file=stderr)
+                if not repo["quiet"]:
+                    print("(stopped)", file=stderr)
                 break
             
             parent = len(branch)
@@ -143,12 +151,17 @@ revision="0:HEAD", authors=None):
                     break
             
             if new is None:
-                print(rev, file=stderr)
+                if not repo["quiet"]:
+                    print(rev, file=stderr)
             elif src is None:
-                print("{}: beginning of {}".format(rev, new), file=stderr)
+                if not repo["quiet"]:
+                    print("{}: beginning of {}".format(rev, new),
+                        file=stderr)
             else:
                 branch = src + branch[parent:]
-                print("{}: copied from {}".format(rev, branch), file=stderr)
+                if not repo["quiet"]:
+                    print("{}: copied from {}".format(rev, branch),
+                        file=stderr)
                 
                 prefix = new + "/"
                 if not any(path.startswith(prefix)
@@ -180,16 +193,19 @@ revision="0:HEAD", authors=None):
         
         for entry in reversed(log):
             if prev["new_branch"] is not None:
-                path = url[len(repos_root):]
-                if not path:
-                    path = "/"
-                stderr.writelines(("switching to ", path))
-                stderr.flush()
+                if not repo["quiet"]:
+                    path = url[len(repos_root):]
+                    if not path:
+                        path = "/"
+                    stderr.writelines(("switching to ", path))
+                    stderr.flush()
                 ra.reparent(url)
-                print(file=stderr)
+                if not repo["quiet"]:
+                    print(file=stderr)
             
             if entry["new_branch"] is not None:
                 url = repos_root + entry["new_branch"]
+            path = url[len(repos_root):]
             
             print("commit refs/{}".format(git_ref), file=repo["dump"])
             
@@ -205,7 +221,6 @@ revision="0:HEAD", authors=None):
                 file=repo["dump"])
             
             if uuid_url:
-                path = url[len(repos_root):]
                 log = "{}\n\ngit-svn-id: {}@{} {}\n".format(
                     entry["log"], path, entry["rev"], repo["uuid"])
             else:
@@ -218,17 +233,20 @@ revision="0:HEAD", authors=None):
             if not prev["rev"] and base_rev:
                 print("from", git_ref, file=repo["dump"])
             
-            stderr.write("{}@{}".format(url[len(repos_root):], entry["rev"]))
-            stderr.flush()
+            if not repo["quiet"]:
+                stderr.write("{}@{}".format(path, entry["rev"]))
+                stderr.flush()
             reporter = ra.do_diff(entry["rev"], "", url, RevEditor(repo),
                 True, True, True)
             
-            stderr.write(":")
-            stderr.flush()
+            if not repo["quiet"]:
+                stderr.write(":")
+                stderr.flush()
             reporter.set_path("", prev["rev"], False)
             reporter.finish()
             # Assume the editor calls are all completed now
-            print(file=stderr)
+            if not repo["quiet"]:
+                print(file=stderr)
             
             print(file=repo["dump"])
             
@@ -248,19 +266,24 @@ class NodeEditor(Editor):
     change_prop = nop
 class DirEditor(NodeEditor):
     def add_directory(self, path):
-        stderr.writelines(("\n  A ", path, "/"))
+        if not self.repo["quiet"]:
+            stderr.writelines(("\n  A ", path, "/"))
         return self
     def open_directory(self, path, base):
-        stderr.writelines(("\n  M ", path, "/"))
+        if not self.repo["quiet"]:
+            stderr.writelines(("\n  M ", path, "/"))
         return self
     def add_file(self, path):
-        stderr.writelines(("\n  A ", path))
+        if not self.repo["quiet"]:
+            stderr.writelines(("\n  A ", path))
         return FileEditor(path, bytes(), self.repo)
     def open_file(self, path, base):
-        stderr.writelines(("\n  M ", path))
+        if not self.repo["quiet"]:
+            stderr.writelines(("\n  M ", path))
         return FileEditor(path, self.repo["files"][path], self.repo)
     def delete_entry(self, path, rev):
-        stderr.writelines(("\n  D ", path))
+        if not self.repo["quiet"]:
+            stderr.writelines(("\n  D ", path))
         print("D", path, file=self.repo["dump"])
 
 class FileEditor(NodeEditor):
@@ -334,6 +357,8 @@ if __name__ == "__main__":
         is assumed to match.""")
     parser.add_argument("-A", "--authors-file", metavar="FILENAME", help=
         'file mapping Subversion user names to Git authors, like "git-svn"')
+    parser.add_argument("-q", "--quiet", action="store_true",
+        help="suppress progress messages")
     args = parser.parse_args()
     main(args.url, args.dump, args.git_ref, revision=args.revision,
-        authors=args.authors_file)
+        authors=args.authors_file, quiet=args.quiet)
