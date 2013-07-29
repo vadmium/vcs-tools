@@ -102,6 +102,12 @@ revision="0:HEAD", authors=None):
             end_rev = ra.get_latest_revnum()
             print(end_rev, file=stderr)
         
+        if end_rev == base_rev:
+            # Degenerate case because no revisions are actually in the
+            # range, but the log call would do a forwards log from
+            # revision N to N + 1.
+            return
+        
         log_iter = ra.iter_log(paths=None, start=end_rev, end=base_rev + 1,
             strict_node_history=False, discover_changed_paths=True)
         
