@@ -1,4 +1,5 @@
 #! /usr/bin/env python2
+from __future__ import print_function
 
 from unittest import TestCase
 from tempfile import mkdtemp
@@ -104,6 +105,53 @@ git-svn-id: /trunk@2 00000000-0000-0000-0000-000000000000
 
 
 """)
+    
+    def test_authors(self):
+        """Authors mapping"""
+        repo = os.path.join(self.dir, "repo")
+        subprocess.check_call(("svnadmin", "create", repo))
+        proc = Popen(("svnadmin", "load", "--quiet", repo),
+            stdin=subprocess.PIPE)
+        proc.communicate(b"""\
+SVN-fs-dump-format-version: 2
+
+UUID: 00000000-0000-0000-0000-000000000000
+
+Revision-number: 1
+Prop-content-length: 98
+Content-length: 98
+
+K 8
+svn:date
+V 27
+1970-01-01T00:00:00.000000Z
+K 7
+svn:log
+V 0
+
+K 10
+svn:author
+V 4
+user
+PROPS-END
+
+Node-action: add
+Node-kind: file
+Node-path: file
+
+""")
+        if proc.returncode:
+            raise SystemExit(proc.returncode)
+        #~ subprocess.check_call(("svnadmin", "dump", "--quiet", repo))
+        
+        url = "file://{}".format(pathname2url(repo))
+        export = os.path.join(self.dir, "export")
+        
+        authors = os.path.join(self.dir, "authors")
+        with open(authors, "wt") as file:
+            print("user = user <user>", file=file)
+        
+        self.svn_fex["main"](url, export, "ref", authors=authors, quiet=True)
 
 if __name__ == "__main__":
     import unittest
