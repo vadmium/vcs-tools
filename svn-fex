@@ -74,7 +74,11 @@ revision="0:HEAD", authors=None, root=None, quiet=False):
     else:
         author_map = None
     
-    Repo(url, dump, git_ref, base_rev, end_rev, author_map, root, quiet)
+    try:
+        Repo(url, dump, git_ref, base_rev, end_rev, author_map, root, quiet)
+    except SubversionException as err:
+        (msg, _) = err.args
+        raise SystemExit(msg)
 
 class Repo(object):
     def __init__(self, url, dump, git_ref, base_rev, end_rev, author_map,
