@@ -37,6 +37,7 @@ from io import SEEK_END
 from subvertpy import SubversionException
 import argparse
 from funcparams import splitdoc
+from contextlib import contextmanager
 
 INVALID_REVNUM = -1
 
@@ -80,6 +81,10 @@ class Repo(object):
     root, quiet):
         self.files = dict()
         self.quiet = quiet
+        if self.quiet:
+            progress = dummycontext
+        else:
+            progress = progresscontext
         
         with open(dump, "w+b") as self.dump:
             self.dump.tell()  # Make sure it is seekable
@@ -89,12 +94,8 @@ class Repo(object):
             # credentials"
             auth = Auth((get_username_provider(),))
             
-            if not self.quiet:
-                stderr.writelines(("connecting to ", url))
-                stderr.flush()
-            ra = RemoteAccess(url, auth=auth)
-            if not self.quiet:
-                print(file=stderr)
+            with progress("connecting to ", url):
+                ra = RemoteAccess(url, auth=auth)
             
             repos_root = ra.get_repos_root()
             branch = url[len(repos_root):]
@@ -107,12 +108,10 @@ class Repo(object):
             # seems to look up the path in the log's ending revision, which
             # fails if it wasn't created then.
             if end_rev == INVALID_REVNUM:
-                if not self.quiet:
-                    stderr.write("HEAD: ")
-                    stderr.flush()
-                end_rev = ra.get_latest_revnum()
-                if not self.quiet:
-                    print(end_rev, file=stderr)
+                with progress("HEAD: "):
+                    end_rev = ra.get_latest_revnum()
+                    if not self.quiet:
+                        stderr.write(format(end_rev))
             
             if end_rev == base_rev:
                 # Degenerate case because no revisions are actually in the
@@ -127,69 +126,63 @@ class Repo(object):
             # TODO: use "get_location_segments" instead
             log = list()
             while True:
-                if not self.quiet:
-                    stderr.write("revision ")
-                    stderr.flush()
-                try:
-                    (paths, rev, props) = next(log_iter)[:3]
-                except SubversionException as err:
-                    (msg, _) = err.args
-                    if not self.quiet:
-                        print("(error)", file=stderr)
-                    raise SystemExit(msg)
-                except StopIteration:
-                    if not self.quiet:
-                        print("(stopped)", file=stderr)
-                    break
-                
-                prefix = branch.rstrip("/") + "/"
-                init_dels = list()
-                for (file, (action, _, _, _)) in paths.items():
-                    if file.startswith(prefix) and action in "DR":
-                        init_dels.append(file[len(prefix):])
-                
-                parent = len(branch)
-                # If the branch location changed, set "new" to the current
-                # branch location, and "src" to (a parent of) the previous
-                # location. If the location did not change, "new" is set to
-                # None.
-                while True:
-                    # At the root directory, this searches for the empty
-                    # string "" rather than "/". This should not matter
-                    # because the root directory cannot be moved from
-                    # anywhere.
-                    path = paths.get(branch[:parent])
-                    if path:
-                        (action, src, _, _) = path
-                        if src is not None or action in "AR":
-                            new = branch
+                with progress("revision "):
+                    try:
+                        (paths, rev, props) = next(log_iter)[:3]
+                    except SubversionException as err:
+                        (msg, _) = err.args
+                        raise SystemExit(msg)
+                    except StopIteration:
+                        if not self.quiet:
+                            stderr.write("(stopped)")
+                        break
+                    
+                    prefix = branch.rstrip("/") + "/"
+                    init_dels = list()
+                    for (file, (action, _, _, _)) in paths.items():
+                        if file.startswith(prefix) and action in "DR":
+                            init_dels.append(file[len(prefix):])
+                    
+                    parent = len(branch)
+                    # If the branch location changed, set "new" to the
+                    # current branch location, and "src" to (a parent of) the
+                    # previous location. If the location did not change,
+                    # "new" is set to None.
+                    while True:
+                        # At the root directory, this searches for the empty
+                        # string "" rather than "/". This should not matter
+                        # because the root directory cannot be moved from
+                        # anywhere.
+                        path = paths.get(branch[:parent])
+                        if path:
+                            (action, src, _, _) = path
+                            if src is not None or action in "AR":
+                                new = branch
+                                break
+                        
+                        parent = branch.rfind("/", 0, parent)
+                        if parent < 0:
+                            new = None
                             break
                     
-                    parent = branch.rfind("/", 0, parent)
-                    if parent < 0:
-                        new = None
-                        break
-                
-                if new is None:
+                    if new is None:
+                        msg = format(rev)
+                    elif src is None:
+                        msg = "{}: beginning of {}".format(rev, new)
+                    else:
+                        branch = src + branch[parent:]
+                        msg = "{}: copied from {}".format(rev, branch)
+                        
+                        if not any(path.startswith(prefix)
+                        for path in paths.keys()):
+                            # This revision is a simple branch copy without
+                            # any file changes. Do not generate a Git commit
+                            # from it.
+                            if log and log[-1]["new_branch"] is None:
+                                log[-1]["new_branch"] = new
+                            continue
                     if not self.quiet:
-                        print(rev, file=stderr)
-                elif src is None:
-                    if not self.quiet:
-                        print("{}: beginning of {}".format(rev, new),
-                            file=stderr)
-                else:
-                    branch = src + branch[parent:]
-                    if not self.quiet:
-                        print("{}: copied from {}".format(rev, branch),
-                            file=stderr)
-                    
-                    if not any(path.startswith(prefix)
-                    for path in paths.keys()):
-                        # This revision is a simple branch copy without any
-                        # file changes. Do not generate a Git commit from it.
-                        if log and log[-1]["new_branch"] is None:
-                            log[-1]["new_branch"] = new
-                        continue
+                        stderr.write(msg)
                 
                 log.append(dict(
                     rev=rev,
@@ -212,15 +205,11 @@ class Repo(object):
             
             for entry in reversed(log):
                 if prev["new_branch"] is not None:
-                    if not self.quiet:
-                        path = url[len(repos_root):]
-                        if not path:
-                            path = "/"
-                        stderr.writelines(("switching to ", path))
-                        stderr.flush()
-                    ra.reparent(url)
-                    if not self.quiet:
-                        print(file=stderr)
+                    path = url[len(repos_root):]
+                    if not path:
+                        path = "/"
+                    with progress("switching to ", path):
+                        ra.reparent(url)
                 
                 if entry["new_branch"] is not None:
                     url = repos_root + entry["new_branch"]
@@ -249,25 +238,19 @@ class Repo(object):
                 if not prev["rev"] and base_rev:
                     print("from", git_ref, file=self.dump)
                 
-                if not self.quiet:
-                    stderr.write("{}@{}:".format(path, entry["rev"]))
-                    stderr.flush()
-                
-                # Diff editor does not convey deletions when starting from
-                # scratch
-                if not prev["rev"]:
-                    dir = DirEditor(self)
-                    for file in init_dels:
-                        dir.delete_entry(file)
-                
-                reporter = ra.do_diff(entry["rev"], "", url, RevEditor(self),
-                    True, True, True)
-                
-                reporter.set_path("", prev["rev"], False)
-                reporter.finish()
-                # Assume the editor calls are all completed now
-                if not self.quiet:
-                    print(file=stderr)
+                with progress("{}@{}:".format(path, entry["rev"])):
+                    # Diff editor does not convey deletions when starting
+                    # from scratch
+                    if not prev["rev"]:
+                        dir = DirEditor(self)
+                        for file in init_dels:
+                            dir.delete_entry(file)
+                    
+                    reporter = ra.do_diff(entry["rev"], "", url,
+                        RevEditor(self), True, True, True)
+                    reporter.set_path("", prev["rev"], False)
+                    reporter.finish()
+                    # Assume the editor calls are all completed now
                 
                 print(file=self.dump)
                 
@@ -366,6 +349,19 @@ class FileArray(object):
     def __repr__(self):
         return "{}({}, {}, {})".format(type(self).__name__,
             self.file, self.pos, self.len)
+
+@contextmanager
+def progresscontext(*args):
+    stderr.writelines(args)
+    stderr.flush()
+    try:
+        yield
+    finally:
+        print(file=stderr)
+
+@contextmanager
+def dummycontext(*pos, **kw):
+    yield
 
 if __name__ == "__main__":
     (summary, _) = splitdoc(main.__doc__)
