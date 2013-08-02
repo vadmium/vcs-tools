@@ -188,7 +188,8 @@ class Repo(object):
                         self.dump.write(log)
                         print(file=self.dump)
                         
-                        if prev_rev is None and base_rev:
+                        if (prev_rev is None and
+                        self.rev > 1 and not log_new_path(self.paths, path)):
                             print("from", git_ref, file=self.dump)
                         
                         if prev_rev is not None and prev_url is not None:
@@ -329,6 +330,22 @@ def parse_svn_rev(rev):
         return INVALID_REVNUM
     return int(rev)
 
+def log_new_path(changes, path):
+    """See if a path has no prior history"""
+    
+    parent = len(path.rstrip("/"))
+    while parent >= 0:
+        change = changes.get(path[:parent] or "/")
+        if change:
+            (action, src, _) = change
+            if src is not None:  # Copy with history
+                return False
+            if action in "AR":  # Add without history
+                return True
+        parent = path.rfind("/", 0, parent)
+    else:  # Branch not copied
+        return False
+
 class FileArray(object):
     def __init__(self, file, pos, len):
         self.file = file
@@ -366,8 +383,8 @@ if __name__ == "__main__":
         help='should include everything that follows the "refs/" prefix')
     parser.add_argument("-r", "--revision", metavar="BASE:END",
         default="0:HEAD", help="""subversion revisions to look up (default:
-        0:HEAD). If the range does not begin at zero, the existing Git branch
-        is assumed to match.""")
+        0:HEAD). If the branch begins before the revision range, the Git
+        branch is assumed to exist.""")
     parser.add_argument("-A", "--authors-file", metavar="FILENAME", help=
         'file mapping Subversion user names to Git authors, like "git-svn"')
     parser.add_argument("--rewrite-root", metavar="URL",
