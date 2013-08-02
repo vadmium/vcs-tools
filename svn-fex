@@ -221,7 +221,7 @@ revision="0:HEAD", authors=None, root=None, quiet=False):
                 author = ("{author} <{author}@{uuid}>".
                     format(author=entry["author"], uuid=repo["uuid"]))
             else:
-                author = author_map[entry[author]]
+                author = author_map[entry["author"]]
             
             print("committer {} {} +0000".format(author, date),
                 file=repo["dump"])
