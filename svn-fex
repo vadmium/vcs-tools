@@ -135,7 +135,7 @@ class Repo(object):
                     stderr.write("revision ")
                     stderr.flush()
                 try:
-                    (paths, rev, props, _) = next(log_iter)
+                    (paths, rev, props) = next(log_iter)[:3]
                 except SubversionException as err:
                     (msg, _) = err.args
                     if not self.quiet:
