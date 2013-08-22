@@ -110,6 +110,30 @@ git-svn-id: /trunk@2 00000000-0000-0000-0000-000000000000
             print("user = user <user>", file=file)
         
         self.svn_fex["main"](url, export, "ref", authors=authors, quiet=True)
+    
+    def test_first_delete(self):
+        """Detection of deletion in first commit"""
+        repo = self.make_repo((
+            dict(nodes=(dict(action="add", path="file", kind="file"),)),
+            dict(nodes=(dict(action="delete", path="file"),)),
+        ))
+        url = "file://{}".format(pathname2url(repo))
+        export = os.path.join(self.dir, "export")
+        self.svn_fex["main"](url, export, "ref", root="", revision="1:HEAD",
+            quiet=True)
+        with open(export, "rb") as export:
+            self.assertMultiLineEqual(export.read(), b"""\
+commit refs/ref
+committer (no author) <(no author)@00000000-0000-0000-0000-000000000000> 0 +0000
+data 54
+
+
+git-svn-id: @2 00000000-0000-0000-0000-000000000000
+
+from ref
+D file
+
+""")
 
 def dump_message(file, headers, props=None):
     msg = Message()
