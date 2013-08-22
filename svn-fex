@@ -142,6 +142,12 @@ class Repo(object):
                         print("(stopped)", file=stderr)
                     break
                 
+                prefix = branch.rstrip("/") + "/"
+                init_dels = list()
+                for (file, (action, _, _, _)) in paths.items():
+                    if file.startswith(prefix) and action in "DR":
+                        init_dels.append(file[len(prefix):])
+                
                 parent = len(branch)
                 # If the branch location changed, set "new" to the current
                 # branch location, and "src" to (a parent of) the previous
@@ -177,7 +183,6 @@ class Repo(object):
                         print("{}: copied from {}".format(rev, branch),
                             file=stderr)
                     
-                    prefix = new + "/"
                     if not any(path.startswith(prefix)
                     for path in paths.keys()):
                         # This revision is a simple branch copy without any
@@ -245,14 +250,19 @@ class Repo(object):
                     print("from", git_ref, file=self.dump)
                 
                 if not self.quiet:
-                    stderr.write("{}@{}".format(path, entry["rev"]))
+                    stderr.write("{}@{}:".format(path, entry["rev"]))
                     stderr.flush()
+                
+                # Diff editor does not convey deletions when starting from
+                # scratch
+                if not prev["rev"]:
+                    dir = DirEditor(self)
+                    for file in init_dels:
+                        dir.delete_entry(file)
+                
                 reporter = ra.do_diff(entry["rev"], "", url, RevEditor(self),
                     True, True, True)
                 
-                if not self.quiet:
-                    stderr.write(":")
-                    stderr.flush()
                 reporter.set_path("", prev["rev"], False)
                 reporter.finish()
                 # Assume the editor calls are all completed now
@@ -296,7 +306,7 @@ class DirEditor(NodeEditor):
         if not self.repo.quiet:
             stderr.writelines(("\n  M ", path))
         return FileEditor(path, self.repo.files[path], self.repo)
-    def delete_entry(self, path, rev):
+    def delete_entry(self, path, rev=None):
         if not self.repo.quiet:
             stderr.writelines(("\n  D ", path))
         print("D", path, file=self.repo.dump)
