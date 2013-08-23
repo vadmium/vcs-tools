@@ -13,10 +13,13 @@ from subvertpy.properties import (
     PROP_REVISION_DATE,
     PROP_REVISION_AUTHOR,
     PROP_REVISION_LOG,
+    PROP_EXECUTABLE, PROP_EXECUTABLE_VALUE,
 )
 from email.message import Message
 from io import BytesIO
 from email.generator import Generator
+import subvertpy.delta
+from functools import partial
 
 class Test(TestCase):
     def setUp(self):
@@ -158,6 +161,141 @@ D file
         cmd = ("git", "rev-parse", "--verify", "refs/heads/master")
         rev = subprocess.check_output(cmd, cwd=git).strip()
         self.assertEqual(rev, "82aeb20279a1269f048243a603b141ee0ea204e9")
+    
+    def test_executable(self):
+        """Order of setting file mode and contents should not matter"""
+        self.svn_fex["main"].__globals__["RemoteAccess"] = ExecutableRa
+        export = os.path.join(self.dir, "export")
+        self.svn_fex["Repo"]("file:///repo", "ref", file=export, quiet=True)
+        with open(export, "rb") as export:
+            self.assertMultiLineEqual(export.read(), b"""\
+blob
+mark :1
+data 0
+
+blob
+mark :2
+data 0
+
+commit refs/ref
+committer (no author) <(no author)@00000000-0000-0000-0000-000000000000> 0 +0000
+data 66
+
+
+git-svn-id: file:///repo@1 00000000-0000-0000-0000-000000000000
+
+M 755 :1 file1
+M 755 :2 file2
+
+blob
+mark :1
+data 8
+content
+
+blob
+mark :2
+data 8
+content
+
+commit refs/ref
+committer (no author) <(no author)@00000000-0000-0000-0000-000000000000> 0 +0000
+data 66
+
+
+git-svn-id: file:///repo@2 00000000-0000-0000-0000-000000000000
+
+M 755 :1 file1
+M 755 :2 file2
+
+""")
+
+def executable_add(editor):
+    root = editor.open_root(0)
+    
+    file = root.add_file("file1")
+    delta = file.apply_textdelta(None)
+    subvertpy.delta.send_stream(BytesIO(b""), delta)
+    file.change_prop(PROP_EXECUTABLE, PROP_EXECUTABLE_VALUE)
+    file.close()
+    
+    file = root.add_file("file2")
+    file.change_prop(PROP_EXECUTABLE, PROP_EXECUTABLE_VALUE)
+    delta = file.apply_textdelta(None)
+    subvertpy.delta.send_stream(BytesIO(b""), delta)
+    file.close()
+    
+    root.close()
+    editor.close()
+
+def executable_modify(editor):
+    root = editor.open_root(1)
+    
+    file = root.open_file("file1", 1)
+    delta = file.apply_textdelta(None)
+    subvertpy.delta.send_stream(BytesIO(b"content\n"), delta)
+    file.close()
+    
+    file = root.open_file("file2", 1)
+    delta = file.apply_textdelta(None)
+    subvertpy.delta.send_stream(BytesIO(b"content\n"), delta)
+    file.close()
+    
+    root.close()
+    editor.close()
+
+class ExecutableRa:
+    revs = (
+        dict(
+            changes={"/file": ("A", None, None)},
+            diff=executable_add,
+        ),
+        dict(
+            changes={"/file": ("M", None, None)},
+            diff=executable_modify,
+        ),
+    )
+    revprops = {
+        PROP_REVISION_DATE: "1970-01-01T00:00:00.000000Z",
+        PROP_REVISION_LOG: "",
+    }
+    
+    def __init__(self, url, *pos, **kw):
+        self.url = url
+    
+    def get_repos_root(self):
+        return self.url
+    def get_uuid(self):
+        return "00000000-0000-0000-0000-000000000000"
+    def get_latest_revnum(self):
+        return len(self.revs)
+    def reparent(self, *pos):
+        pass
+    
+    def iter_log(self, *pos, **kw):
+        revnum = len(self.revs)
+        for rev in reversed(self.revs):
+            changes = dict()
+            for (path, value) in rev["changes"].items():
+                changes[path] = value + (None,)
+            yield (changes, revnum, self.revprops, False)
+            revnum -= 1
+    
+    def get_location_segments(self, path, peg, start, end, rcvr):
+        rcvr(end, 2, path)
+    
+    def get_log(self, callback, paths, start, *pos, **kw):
+        changes = self.revs[start - 1]["changes"]
+        callback(changes, start, self.revprops, False)
+    
+    def do_diff(self, targetrev, path, targeturl, editor, *pos):
+        diff = self.revs[targetrev - 1]["diff"]
+        return ExecutableReporter(partial(diff, editor))
+
+class ExecutableReporter:
+    def __init__(self, diff):
+        self.finish = diff
+    def set_path(self, *pos):
+        pass
 
 def dump_message(file, headers, props=None, content=None):
     msg = Message()
