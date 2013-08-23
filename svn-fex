@@ -32,8 +32,7 @@ from subvertpy.properties import (
     PROP_EXECUTABLE,
 )
 from sys import stderr, argv, exc_info
-from time import strptime
-from calendar import timegm
+from subvertpy.properties import time_from_cstring
 from io import SEEK_END
 from subvertpy import SubversionException
 from subprocess import Popen
@@ -225,8 +224,7 @@ class Repo(object):
                         print("commit refs/{}".format(git_ref),
                             file=self.export.file)
                         
-                        date = strptime(self.date[:19], "%Y-%m-%dT%H:%M:%S")
-                        date = timegm(date)
+                        date = time_from_cstring(self.date) // 10**6
                         
                         if author_map is None:
                             author = ("{0.author} <{0.author}@{0.uuid}>".
