@@ -48,7 +48,8 @@ class Test(TestCase):
                 PROP_REVISION_LOG: "",
             }
             props.update(rev.get("props", ()))
-            dump_message(proc.stdin, (("Revision-number", str(i)),), props)
+            headers = (("Revision-number", str(i)),)
+            dump_message(proc.stdin, headers, props=props)
             
             for node in rev.get("nodes", {}):
                 headers = list()
@@ -56,7 +57,8 @@ class Test(TestCase):
                     value = node.get(name)
                     if value is not None:
                         headers.append(("Node-" + name, value))
-                dump_message(proc.stdin, headers, node.get("props"))
+                dump_message(proc.stdin, headers,
+                    props=node.get("props"), content=node.get("content"))
         
         proc.communicate()
         if proc.returncode:
@@ -99,7 +101,7 @@ git-svn-id: /trunk@2 00000000-0000-0000-0000-000000000000
         """Authors mapping"""
         repo = self.make_repo((
             dict(props={PROP_REVISION_AUTHOR: "user"}, nodes=(
-                dict(action="add", path="file", kind="file"),
+                dict(action="add", path="file", kind="file", content=b""),
             )),
         ))
         url = "file://{}".format(pathname2url(repo))
@@ -111,7 +113,9 @@ git-svn-id: /trunk@2 00000000-0000-0000-0000-000000000000
     def test_first_delete(self):
         """Detection of deletion in first commit"""
         repo = self.make_repo((
-            dict(nodes=(dict(action="add", path="file", kind="file"),)),
+            dict(nodes=(
+                dict(action="add", path="file", kind="file", content=b""),
+            )),
             dict(nodes=(dict(action="delete", path="file"),)),
         ))
         url = "file://{}".format(pathname2url(repo))
@@ -132,25 +136,31 @@ D file
 
 """)
 
-def dump_message(file, headers, props=None):
+def dump_message(file, headers, props=None, content=None):
     msg = Message()
     for (name, value) in headers:
         msg[name] = value
+    payload = BytesIO()
     
     if props is not None:
-        payload = BytesIO()
+        start = payload.tell()
         for (key, value) in props.items():
             print(b"K", len(key), file=payload)
             print(key, file=payload)
             print(b"V", len(value), file=payload)
             print(value, file=payload)
         print(b"PROPS-END", file=payload)
-        payload = payload.getvalue()
         
-        msg["Prop-content-length"] = str(len(payload))
+        msg["Prop-content-length"] = str(payload.tell() - start)
+    
+    if content is not None:
+        msg["Text-content-length"] = str(len(content))
+        payload.write(content)
+    
+    if props is not None or content is not None:
+        payload = payload.getvalue()
         msg["Content-length"] = str(len(payload))
         msg.set_payload(payload)
-    
     Generator(file, mangle_from_=False).flatten(msg)
 
 if __name__ == "__main__":
