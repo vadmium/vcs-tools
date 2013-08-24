@@ -135,6 +135,63 @@ from ref
 D file
 
 """)
+    
+    def test_multiple(self):
+        """Modification of multiple files"""
+        repo = self.make_repo((
+            dict(nodes=(
+                dict(action="add", path="file1", kind="file", content=b""),
+                dict(action="add", path="file2", kind="file", content=b""),
+            )),
+            dict(nodes=(
+                dict(action="change", path="file1", content=b"mod 1\n"),
+                dict(action="change", path="file2", content=b"mod 2\n"),
+            )),
+        ))
+        url = "file://{}".format(pathname2url(repo))
+        export = os.path.join(self.dir, "export")
+        self.svn_fex["Repo"](url, "ref", file=export, root="", quiet=True)
+        with open(export, "rb") as export:
+            self.assertMultiLineEqual(export.read(), b"""\
+blob
+mark :1
+data 0
+
+blob
+mark :2
+data 0
+
+commit refs/ref
+committer (no author) <(no author)@00000000-0000-0000-0000-000000000000> 0 +0000
+data 54
+
+
+git-svn-id: @1 00000000-0000-0000-0000-000000000000
+
+M 644 :1 file1
+M 644 :2 file2
+
+blob
+mark :1
+data 6
+mod 1
+
+blob
+mark :2
+data 6
+mod 2
+
+commit refs/ref
+committer (no author) <(no author)@00000000-0000-0000-0000-000000000000> 0 +0000
+data 54
+
+
+git-svn-id: @2 00000000-0000-0000-0000-000000000000
+
+M 644 :1 file1
+M 644 :2 file2
+
+""")
 
 def dump_message(file, headers, props=None, content=None):
     msg = Message()
