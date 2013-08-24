@@ -49,10 +49,10 @@ def main():
     parser = argparse.ArgumentParser(description=summary)
     
     parser.add_argument("url", help="subversion URL")
-    parser.add_argument("--file", metavar="FILENAME",
-        help="fast import file")
+    parser.add_argument("--file",
+        metavar="FILENAME", help="fast import file")
     parser.add_argument("importer", nargs="*",
-        help="command which is piped the fast import stream")
+        help="command to pipe fast import stream to")
     parser.add_argument("--git-ref", required=True, metavar="REF",
         help='should include everything that follows the "refs/" prefix')
     parser.add_argument("-r", "--revision", metavar="BASE:END",
@@ -61,8 +61,8 @@ def main():
         is assumed to match.""")
     parser.add_argument("-A", "--authors-file", metavar="FILENAME", help=
         'file mapping Subversion user names to Git authors, like "git-svn"')
-    parser.add_argument("--rewrite-root", metavar="URL",
-        help="subversion URL to store in the metadata")
+    parser.add_argument("--rewrite-root",
+        metavar="URL", help="subversion URL to store in the metadata")
     parser.add_argument("--ignore", action="append", default=list(),
         metavar="PATH", help="add a path to be excluded from export")
     parser.add_argument("-q", "--quiet", action="store_true",
@@ -120,7 +120,7 @@ class Repo(object):
             self.export = FastExportFile(file)
         with self.export:
             # Auth stuff avoids the following error for diffs on local
-            # (file://) URLs: "No provider registered for 'svn.username'
+            # (file:) URLs: "No provider registered for 'svn.username'
             # credentials"
             auth = Auth((get_username_provider(),))
             
@@ -395,6 +395,7 @@ class FastExportPipe(FastExport):
 class Editor(object):
     def close(self):
         pass
+
 class RevEditor(Editor):
     def __init__(self, export, quiet):
         self.export = export
@@ -412,6 +413,7 @@ class NodeEditor(Editor):
         self.rev = rev
     def change_prop(self, name, value):
         pass
+
 class DirEditor(NodeEditor):
     def add_directory(self, path):
         if not self.rev.quiet:
@@ -423,16 +425,19 @@ class DirEditor(NodeEditor):
             stderr.writelines(("\n  M ", path, "/"))
             stderr.flush()
         return self
+    
     def add_file(self, path):
         if not self.rev.quiet:
             stderr.writelines(("\n  A ", path))
             stderr.flush()
         return FileEditor(path, self.rev)
+    
     def open_file(self, path, base):
         if not self.rev.quiet:
             stderr.writelines(("\n  M ", path))
             stderr.flush()
         return FileEditor(path, self.rev, original=self.rev.export[path])
+    
     def delete_entry(self, path, rev=None):
         if not self.rev.quiet:
             stderr.writelines(("\n  D ", path))

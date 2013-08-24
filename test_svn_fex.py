@@ -50,7 +50,7 @@ class Test(TestCase):
                 PROP_REVISION_LOG: "",
             }
             props.update(rev.get("props", ()))
-            headers = (("Revision-number", str(i)),)
+            headers = (("Revision-number", format(i)),)
             dump_message(proc.stdin, headers, props=props)
             
             for node in rev.get("nodes", {}):
@@ -65,7 +65,6 @@ class Test(TestCase):
         proc.communicate()
         if proc.returncode:
             raise SystemExit(proc.returncode)
-        #~ subprocess.check_call(("svnadmin", "dump", "--quiet", repo))
         return repo
     
     def test_modify_branch(self):
@@ -322,15 +321,15 @@ def dump_message(file, headers, props=None, content=None):
             payload.writelines((value.encode("ascii"), b"\n"))
         payload.write(b"PROPS-END\n")
         
-        msg["Prop-content-length"] = str(payload.tell() - start)
+        msg["Prop-content-length"] = format(payload.tell() - start)
     
     if content is not None:
-        msg["Text-content-length"] = str(len(content))
+        msg["Text-content-length"] = format(len(content))
         payload.write(content)
     
     if props is not None or content is not None:
         payload = payload.getvalue()
-        msg["Content-length"] = str(len(payload))
+        msg["Content-length"] = format(len(payload))
         
         # Workaround for Python issue 18324, "set_payload doe snot handle
         # binary payloads correctly", http://bugs.python.org/issue18324
