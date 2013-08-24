@@ -9,6 +9,7 @@ The program is written to:
     * skipping revisions that do not affect the branch
     * skipping paths that are outside the branch
     * requesting deltas rather than full copies of files where practical
+    * requesting exclusion of deltas for ignored files
 * follow branch copies
 * produce identical commits to "git-svn"
 * be run incrementally
@@ -41,6 +42,7 @@ import argparse
 from funcparams import splitdoc
 from errno import EPIPE
 from contextlib import contextmanager
+import subvertpy.ra
 
 INVALID_REVNUM = -1
 
@@ -63,6 +65,8 @@ def main():
         'file mapping Subversion user names to Git authors, like "git-svn"')
     parser.add_argument("--rewrite-root", metavar="URL",
         help="subversion URL to store in the metadata")
+    parser.add_argument("--ignore", action="append", default=list(),
+        metavar="PATH", help="add a path to be excluded from export")
     parser.add_argument("-q", "--quiet", action="store_true",
         help="suppress progress messages")
     
@@ -91,6 +95,7 @@ def main():
             base_rev=base_rev, end_rev=end_rev,
             author_map=author_map,
             root=args.rewrite_root,
+            ignore=args.ignore,
             quiet=args.quiet,
         )
     except SubversionException as err:
@@ -102,6 +107,7 @@ class Repo(object):
         base_rev=0, end_rev=INVALID_REVNUM,
         author_map=None,
         root=None,
+        ignore=(),
         quiet=False,
     ):
         self.quiet = quiet
@@ -208,9 +214,16 @@ class Repo(object):
                         if prev_rev is None:
                             dir = DirEditor(editor)
                             for (file, (action, _, _)) in self.paths.items():
-                                if (file.startswith(prefix) and
-                                action in "DR"):
-                                    dir.delete_entry(file[len(prefix):])
+                                if (not file.startswith(prefix) or
+                                action not in "DR"):
+                                    continue
+                                file = file[len(prefix):]
+                                for p in ignore:
+                                    if (file == p or
+                                    file.startswith((p + "/").lstrip("/"))):
+                                        break
+                                else:
+                                    dir.delete_entry(file)
                         
                         reporter = ra.do_diff(self.rev, "", new_url, editor,
                             True, True, True)
@@ -218,6 +231,11 @@ class Repo(object):
                             reporter.set_path("", self.rev, True)
                         else:
                             reporter.set_path("", prev_rev, False)
+                        
+                        for p in ignore:
+                            reporter.set_path(p, INVALID_REVNUM, True, None,
+                                subvertpy.ra.DEPTH_EXCLUDE)
+                        
                         reporter.finish()
                         # Assume the editor calls are all completed now
                         
