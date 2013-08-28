@@ -221,8 +221,8 @@ class Repo(object):
                         reporter.finish()
                         # Assume the editor calls are all completed now
                         
-                        print("commit refs/{}".format(git_ref),
-                            file=self.export.file)
+                        line = "commit refs/{}\n".format(git_ref)
+                        self.export.file.write(line.encode("utf-8"))
                         
                         date = time_from_cstring(self.date) // 10**6
                         
@@ -232,23 +232,26 @@ class Repo(object):
                         else:
                             author = author_map[self.author]
                         
-                        print("committer {} {} +0000".format(author, date),
-                            file=self.export.file)
+                        line = "committer {} {} +0000\n".format(author, date)
+                        self.export.file.write(line.encode("utf-8"))
                         
                         log = "{}\n\ngit-svn-id: {}{}@{} {}\n".format(
                             self.log, root, path.rstrip("/"), self.rev,
                             self.uuid)
-                        print("data", len(log), file=self.export.file)
-                        self.export.file.write(log)
-                        print(file=self.export.file)
+                        log = log.encode("utf-8")
+                        line = "data {}\n".format(len(log))
+                        self.export.file.write(line.encode("ascii"))
+                        self.export.file.writelines((log, b"\n"))
                         
                         if (prev_rev is None and
                         self.rev > 1 and not log_new_path(self.paths, path)):
-                            print("from", git_ref, file=self.export.file)
+                            line = "from {}\n".format(git_ref)
+                            self.export.file.write(line.encode("utf-8"))
                         
                         for args in editor.edits:
-                            print(*args, file=self.export.file)
-                        print(file=self.export.file)
+                            line = " ".join(args).encode("utf-8")
+                            self.export.file.writelines((line, b"\n"))
+                        self.export.file.write(b"\n")
                         
                         prev_rev = self.rev
                         
@@ -288,7 +291,7 @@ class FastExport(object):
     
     def blob(self, path, buf):
         blob = self.blob_header(path, buf)
-        print(buf, file=self.file)
+        self.file.writelines((buf, b"\n"))
         return blob
     
     def blob_header(self, path, buf):
@@ -297,9 +300,9 @@ class FastExport(object):
             mark = ":{}".format(1 + len(self.files))
             self.files[path] = (mark,)
         
-        print("blob", file=self.file)
-        print("mark", mark, file=self.file)
-        print("data", len(buf), file=self.file)
+        self.file.write(b"blob\n")
+        self.file.write("mark {}\n".format(mark).encode("ascii"))
+        self.file.write("data {}\n".format(len(buf)).encode("ascii"))
         return mark
     
     def __setitem__(self, path, value):
@@ -322,7 +325,7 @@ class FastExportFile(FastExport):
         blob = self.blob_header(path, buf)
         filedata = FileArray(self.file, self.file.tell(), len(buf))
         self.filedata[blob] = filedata
-        print(buf, file=self.file)
+        self.file.writelines((buf, b"\n"))
         return blob
     
     def cat_blob(self, blob):
@@ -335,13 +338,13 @@ class FastExportPipe(FastExport):
         FastExport.__init__(self)
     def open(self):
         self.file = self.proc.stdin
-        print("feature done", file=self.file)
-        print("feature cat-blob", file=self.file)
+        self.file.write(b"feature done\n")
+        self.file.write(b"feature cat-blob\n")
     
     def __exit__(self, type, value, traceback):
         try:
             if not value:
-                print("done", file=self.file)
+                self.file.write(b"done\n")
         except BaseException as err:
             value = err
         finally:
@@ -365,9 +368,9 @@ class FastExportPipe(FastExport):
                 raise SystemExit(returncode)
     
     def cat_blob(self, blob):
-        print("cat-blob", blob, file=self.file)
+        self.file.write("cat-blob {}\n".format(blob).encode("ascii"))
         self.file.flush()
-        size = int(self.proc.stdout.readline().split(" ", 3)[2])
+        size = int(self.proc.stdout.readline().split(b" ", 3)[2])
         data = self.proc.stdout.read(size)
         self.proc.stdout.readline()
         return data

@@ -80,8 +80,8 @@ class Test(TestCase):
         url = "file://{}/trunk".format(pathname2url(repo))
         export = os.path.join(self.dir, "export")
         self.svn_fex["Repo"](url, "ref", file=export, root="", quiet=True)
-        with open(export, "rb") as export:
-            self.assertMultiLineEqual(b"""\
+        with open(export, "r") as export:
+            self.assertMultiLineEqual("""\
 commit refs/ref
 committer (no author) <(no author)@00000000-0000-0000-0000-000000000000> 0 +0000
 data 60
@@ -126,8 +126,8 @@ git-svn-id: /trunk@2 00000000-0000-0000-0000-000000000000
         export = os.path.join(self.dir, "export")
         self.svn_fex["Repo"](url, "ref", file=export, root="", base_rev=1,
             quiet=True)
-        with open(export, "rb") as export:
-            self.assertMultiLineEqual(b"""\
+        with open(export, "r") as export:
+            self.assertMultiLineEqual("""\
 commit refs/ref
 committer (no author) <(no author)@00000000-0000-0000-0000-000000000000> 0 +0000
 data 54
@@ -161,7 +161,7 @@ D file
         self.svn_fex["Repo"](url, "heads/master", importer=importer, root="",
             quiet=True)
         cmd = ("git", "rev-parse", "--verify", "refs/heads/master")
-        rev = subprocess.check_output(cmd, cwd=git).strip()
+        rev = subprocess.check_output(cmd, cwd=git).decode("ascii").strip()
         self.assertEqual("82aeb20279a1269f048243a603b141ee0ea204e9", rev)
     
     def test_executable(self):
@@ -169,8 +169,8 @@ D file
         self.svn_fex["main"].__globals__["RemoteAccess"] = ExecutableRa
         export = os.path.join(self.dir, "export")
         self.svn_fex["Repo"]("file:///repo", "ref", file=export, quiet=True)
-        with open(export, "rb") as export:
-            self.assertMultiLineEqual(b"""\
+        with open(export, "r") as export:
+            self.assertMultiLineEqual("""\
 blob
 mark :1
 data 0
@@ -309,11 +309,11 @@ def dump_message(file, headers, props=None, content=None):
     if props is not None:
         start = payload.tell()
         for (key, value) in props.items():
-            print(b"K", len(key), file=payload)
-            print(key, file=payload)
-            print(b"V", len(value), file=payload)
-            print(value, file=payload)
-        print(b"PROPS-END", file=payload)
+            payload.write("K {}\n".format(len(key)).encode("ascii"))
+            payload.writelines((key.encode("ascii"), b"\n"))
+            payload.write("V {}\n".format(len(value)).encode("ascii"))
+            payload.writelines((value.encode("ascii"), b"\n"))
+        payload.write(b"PROPS-END\n")
         
         msg["Prop-content-length"] = str(payload.tell() - start)
     
