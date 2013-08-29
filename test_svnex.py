@@ -5,7 +5,7 @@ from tempfile import TemporaryDirectory
 import subprocess
 import os.path
 from urllib.request import pathname2url
-import imp
+import svnex
 from subprocess import Popen
 from subvertpy.properties import (
     PROP_REVISION_DATE,
@@ -18,24 +18,19 @@ from io import BytesIO
 from email.generator import BytesGenerator
 import subvertpy.delta, subvertpy.repos
 from functools import partial
-from shorthand import substattr
 from streams import dummywriter
+from shorthand import substattr
 import sys
 
-class BaseTest(TestCase):
+class TempDirTest(TestCase):
     def setUp(self):
         TestCase.setUp(self)
         
-        path = os.path.join(os.path.dirname(__file__), "svn-fex")
-        with open(path, "rb") as file:
-            self.svn_fex = imp.load_module("svn-fex", file, path,
-                ("", "rb", imp.PY_SOURCE))
-        
-        tempdir = TemporaryDirectory(prefix="svn-fex-")
+        tempdir = TemporaryDirectory(prefix="svnex-")
         self.addCleanup(tempdir.cleanup)
         self.dir = tempdir.name
 
-class RepoTests(BaseTest):
+class RepoTests(TempDirTest):
     def make_repo(self, revs):
         dump = BytesIO()
         dump_message(dump, (("SVN-fs-dump-format-version", "2"),))
@@ -80,8 +75,8 @@ class RepoTests(BaseTest):
         ))
         url = "file://{}/trunk".format(pathname2url(repo))
         output = os.path.join(self.dir, "output")
-        with self.svn_fex.FastExportFile(output) as fex:
-            exporter = self.svn_fex.Exporter(url, fex, root="", quiet=True)
+        with svnex.FastExportFile(output) as fex:
+            exporter = svnex.Exporter(url, fex, root="", quiet=True)
             exporter.export("refs/ref")
         with open(output, "r", encoding="ascii") as output:
             self.assertMultiLineEqual("""\
@@ -116,8 +111,8 @@ git-svn-id: /trunk@2 00000000-0000-0000-0000-000000000000
         url = "file://{}".format(pathname2url(repo))
         output = os.path.join(self.dir, "output")
         authors = {"user": "user <user>"}
-        with self.svn_fex.FastExportFile(output) as output:
-            exporter = self.svn_fex.Exporter(url, output,
+        with svnex.FastExportFile(output) as output:
+            exporter = svnex.Exporter(url, output,
                 author_map=authors, quiet=True)
             exporter.export("refs/ref")
     
@@ -139,8 +134,8 @@ git-svn-id: /trunk@2 00000000-0000-0000-0000-000000000000
         ))
         url = "file://{}".format(pathname2url(repo))
         output = os.path.join(self.dir, "output")
-        with self.svn_fex.FastExportFile(output) as fex:
-            exporter = self.svn_fex.Exporter(url, fex, root="",
+        with svnex.FastExportFile(output) as fex:
+            exporter = svnex.Exporter(url, fex, root="",
                 rev_map={"": {1: "refs/ref"}}, ignore=("igfile", "igdir"),
                 quiet=True)
             exporter.export("refs/ref")
@@ -177,9 +172,8 @@ D file
         subprocess.check_call(("git", "init", "--quiet", "--", git))
         script = 'cd "$1" && git fast-import --quiet'
         importer = ("sh", "-c", script, "--", git)
-        with self.svn_fex.FastExportPipe(importer) as importer:
-            exporter = self.svn_fex.Exporter(url, importer, root="",
-                quiet=True)
+        with svnex.FastExportPipe(importer) as importer:
+            exporter = svnex.Exporter(url, importer, root="", quiet=True)
             exporter.export("refs/heads/master")
         cmd = ("git", "rev-parse", "--verify", "refs/heads/master")
         rev = subprocess.check_output(cmd, cwd=git).decode("ascii").strip()
@@ -187,13 +181,13 @@ D file
     
     def test_executable(self):
         """Order of setting file mode and contents should not matter"""
-        self.svn_fex.RemoteAccess = ExecutableRa
-        output = os.path.join(self.dir, "output")
-        with self.svn_fex.FastExportFile(output) as fex:
-            exporter = self.svn_fex.Exporter("file:///repo", fex, quiet=True)
-            exporter.export("refs/ref")
-        with open(output, "r", encoding="ascii") as output:
-            self.assertMultiLineEqual("""\
+        with substattr(svnex, "RemoteAccess", ExecutableRa):
+            output = os.path.join(self.dir, "output")
+            with svnex.FastExportFile(output) as fex:
+                exporter = svnex.Exporter("file:///repo", fex, quiet=True)
+                exporter.export("refs/ref")
+            with open(output, "r", encoding="ascii") as output:
+                self.assertMultiLineEqual("""\
 blob
 mark :1
 data 0
@@ -235,7 +229,7 @@ M 755 :1 file1
 M 755 :2 file2
 
 """,
-                output.read())
+                    output.read())
     
     def test_export_copies(self):
         """Test the "--export-copies" mode"""
@@ -252,8 +246,8 @@ M 755 :2 file2
         ))
         url = "file://{}/branch".format(pathname2url(repo))
         output = os.path.join(self.dir, "output")
-        with self.svn_fex.FastExportFile(output) as fex:
-            exporter = self.svn_fex.Exporter(url, fex, root="",
+        with svnex.FastExportFile(output) as fex:
+            exporter = svnex.Exporter(url, fex, root="",
                 export_copies=True, quiet=True)
             exporter.export("refs/branch")
         with open(output, "r", encoding="ascii") as output:
@@ -387,7 +381,7 @@ class ExecutableReporter:
     def set_path(self, *pos):
         pass
 
-class TestAuthorsFile(BaseTest):
+class TestAuthorsFile(TempDirTest):
     """Parsing authors file"""
     def runTest(self):
         authors = os.path.join(self.dir, "authors")
@@ -400,9 +394,8 @@ class TestAuthorsFile(BaseTest):
         output = os.path.join(self.dir, "output")
         argv = ["svn-fex", "--git-ref", "refs/ref", "--authors", authors,
             "--file", output, "file:///dummy"]
-        with substattr(sys, "argv", argv):
-            self.svn_fex.Exporter = self.Exporter
-            self.svn_fex.main()
+        with substattr(sys, "argv", argv), substattr(svnex, self.Exporter):
+            svnex.main()
         
         self.assertEqual(dict(
             user="Some Body <whoever@where.ever>",
