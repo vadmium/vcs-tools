@@ -1,12 +1,11 @@
-#! /usr/bin/env python2
-from __future__ import print_function
+#! /usr/bin/env python3
 
 from unittest import TestCase
 from tempfile import mkdtemp
 from shutil import rmtree
 import subprocess
 import os.path
-from urllib import pathname2url
+from urllib.request import pathname2url
 import runpy
 from subprocess import Popen
 from subvertpy.properties import (
@@ -17,7 +16,7 @@ from subvertpy.properties import (
 )
 from email.message import Message
 from io import BytesIO
-from email.generator import Generator
+from email.generator import BytesGenerator
 import subvertpy.delta
 from functools import partial
 
@@ -80,8 +79,8 @@ class Test(TestCase):
         url = "file://{}/trunk".format(pathname2url(repo))
         export = os.path.join(self.dir, "export")
         self.svn_fex["Repo"](url, "ref", file=export, root="", quiet=True)
-        with open(export, "rb") as export:
-            self.assertMultiLineEqual(b"""\
+        with open(export, "r", encoding="ascii") as export:
+            self.assertMultiLineEqual("""\
 commit refs/ref
 committer (no author) <(no author)@00000000-0000-0000-0000-000000000000> 0 +0000
 data 60
@@ -134,8 +133,8 @@ git-svn-id: /trunk@2 00000000-0000-0000-0000-000000000000
         export = os.path.join(self.dir, "export")
         self.svn_fex["Repo"](url, "ref", file=export, root="", base_rev=1,
             ignore=("igfile", "igdir"), quiet=True)
-        with open(export, "rb") as export:
-            self.assertMultiLineEqual(b"""\
+        with open(export, "r", encoding="ascii") as export:
+            self.assertMultiLineEqual("""\
 commit refs/ref
 committer (no author) <(no author)@00000000-0000-0000-0000-000000000000> 0 +0000
 data 54
@@ -169,7 +168,7 @@ D file
         self.svn_fex["Repo"](url, "heads/master", importer=importer, root="",
             quiet=True)
         cmd = ("git", "rev-parse", "--verify", "refs/heads/master")
-        rev = subprocess.check_output(cmd, cwd=git).strip()
+        rev = subprocess.check_output(cmd, cwd=git).decode("ascii").strip()
         self.assertEqual("82aeb20279a1269f048243a603b141ee0ea204e9", rev)
     
     def test_executable(self):
@@ -177,8 +176,8 @@ D file
         self.svn_fex["main"].__globals__["RemoteAccess"] = ExecutableRa
         export = os.path.join(self.dir, "export")
         self.svn_fex["Repo"]("file:///repo", "ref", file=export, quiet=True)
-        with open(export, "rb") as export:
-            self.assertMultiLineEqual(b"""\
+        with open(export, "r", encoding="ascii") as export:
+            self.assertMultiLineEqual("""\
 blob
 mark :1
 data 0
@@ -317,11 +316,11 @@ def dump_message(file, headers, props=None, content=None):
     if props is not None:
         start = payload.tell()
         for (key, value) in props.items():
-            print(b"K", len(key), file=payload)
-            print(key, file=payload)
-            print(b"V", len(value), file=payload)
-            print(value, file=payload)
-        print(b"PROPS-END", file=payload)
+            payload.write("K {}\n".format(len(key)).encode("ascii"))
+            payload.writelines((key.encode("ascii"), b"\n"))
+            payload.write("V {}\n".format(len(value)).encode("ascii"))
+            payload.writelines((value.encode("ascii"), b"\n"))
+        payload.write(b"PROPS-END\n")
         
         msg["Prop-content-length"] = str(payload.tell() - start)
     
@@ -332,8 +331,12 @@ def dump_message(file, headers, props=None, content=None):
     if props is not None or content is not None:
         payload = payload.getvalue()
         msg["Content-length"] = str(len(payload))
-        msg.set_payload(payload)
-    Generator(file, mangle_from_=False).flatten(msg)
+        
+        # Workaround for Python issue 18324, "set_payload doe snot handle
+        # binary payloads correctly", http://bugs.python.org/issue18324
+        msg.set_payload(payload.decode("ascii", "surrogateescape"))
+    
+    BytesGenerator(file, mangle_from_=False).flatten(msg)
 
 if __name__ == "__main__":
     import unittest
