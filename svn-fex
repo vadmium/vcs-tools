@@ -265,6 +265,7 @@ class Repo(object):
             return
         if not self.quiet:
             stderr.write("\n  /{}:{}-{}".format(path, start, end))
+            stderr.flush()
         self.locations.append((start - 1, end, path))
     
     def on_revision(self, paths, rev, props, children=False):
@@ -397,22 +398,27 @@ class DirEditor(NodeEditor):
     def add_directory(self, path):
         if not self.rev.quiet:
             stderr.writelines(("\n  A ", path, "/"))
+            stderr.flush()
         return self
     def open_directory(self, path, base):
         if not self.rev.quiet:
             stderr.writelines(("\n  M ", path, "/"))
+            stderr.flush()
         return self
     def add_file(self, path):
         if not self.rev.quiet:
             stderr.writelines(("\n  A ", path))
+            stderr.flush()
         return FileEditor(path, self.rev)
     def open_file(self, path, base):
         if not self.rev.quiet:
             stderr.writelines(("\n  M ", path))
+            stderr.flush()
         return FileEditor(path, self.rev, original=self.rev.export[path])
     def delete_entry(self, path, rev=None):
         if not self.rev.quiet:
             stderr.writelines(("\n  D ", path))
+            stderr.flush()
         self.rev.edits.append(("D", path))
 
 class FileEditor(NodeEditor):
