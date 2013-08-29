@@ -12,6 +12,7 @@ The program is written to:
     * requesting exclusion of deltas for ignored files
 * follow branch copies
 * produce identical commits to "git-svn", except that it
+    * does not merge new branches and tags with deleted paths
     * optionally drops commits that are simple branch copies
 * be run incrementally
 * handle Subversion merge tracking information
