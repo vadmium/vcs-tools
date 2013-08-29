@@ -246,8 +246,8 @@ class Repo(object):
                             line = "from {}\n".format(git_ref)
                             self.export.file.write(line.encode("utf-8"))
                         
-                        for args in editor.edits:
-                            line = " ".join(args).encode("utf-8")
+                        for line in editor.edits:
+                            line = line.encode("utf-8")
                             self.export.file.writelines((line, b"\n"))
                         self.export.file.write(b"\n")
                         
@@ -419,7 +419,7 @@ class DirEditor(NodeEditor):
         if not self.rev.quiet:
             stderr.writelines(("\n  D ", path))
             stderr.flush()
-        self.rev.edits.append(("D", path))
+        self.rev.edits.append("D {}".format(path))
 
 class FileEditor(NodeEditor):
     def __init__(self, path, rev, original=(None, "644")):
@@ -439,7 +439,7 @@ class FileEditor(NodeEditor):
     
     def close(self):
         self.rev.export[self.path] = (self.blob, self.mode)
-        self.rev.edits.append(("M", self.mode, self.blob, self.path))
+        self.rev.edits.append("M {0.mode} {0.blob} {0.path}".format(self))
 
 class DeltaWindowHandler(object):
     def __init__(self, file):
