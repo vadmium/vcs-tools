@@ -56,8 +56,8 @@ def main():
     group.add_argument("importer", nargs="*", default=(),
         help="command to pipe fast import stream to")
     
-    parser.add_argument("--git-ref", required=True, metavar="REF",
-        help='should include everything that follows the "refs/" prefix')
+    parser.add_argument("--git-ref", required=True, metavar="REFNAME",
+        help="Git ref name to export to (e.g. refs/remotes/svn/trunk)")
     parser.add_argument("-r", "--revision", metavar="BASE:END",
         default="0:HEAD", help="""subversion revisions to look up (default:
         0:HEAD). If the range does not begin at zero, the existing Git branch
@@ -248,7 +248,7 @@ class Repo(object):
                         reporter.finish()
                         # Assume the editor calls are all completed now
                         
-                        line = "commit refs/{}\n".format(git_ref)
+                        line = "commit {}\n".format(git_ref)
                         self.export.file.write(line.encode("utf-8"))
                         
                         date = time_from_cstring(self.date) // 10**6
