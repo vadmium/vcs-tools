@@ -41,6 +41,7 @@ from funcparams import splitdoc
 from errno import EPIPE
 from contextlib import contextmanager
 import subvertpy.ra
+from contextlib import closing
 
 INVALID_REVNUM = -1
 
@@ -115,11 +116,12 @@ class Repo(object):
         export_copies=False,
         quiet=False,
     ):
+        self.export_copies = export_copies
         self.quiet = quiet
         if self.quiet:
-            progress = dummycontext
+            self.progress = dummycontext
         else:
-            progress = progresscontext
+            self.progress = progresscontext
         
         if importer:
             self.export = FastExportPipe(importer)
@@ -131,28 +133,16 @@ class Repo(object):
             # credentials"
             auth = Auth((get_username_provider(),))
             
-            with progress("connecting to ", url):
-                ra = RemoteAccess(url, auth=auth)
+            with self.progress("connecting to ", url):
+                self.ra = RemoteAccess(url, auth=auth)
+                self.url = url
             
-            repos_root = ra.get_repos_root()
+            self.repos_root = self.ra.get_repos_root()
             if root is None:
-                root = repos_root
+                root = self.repos_root
             
-            self.uuid = ra.get_uuid()
-            
-            if end_rev == base_rev:
-                # RemoteAccess.get_location_segments() does not support an
-                # empty range, so handle this as a special case. Also, HEAD:
-                # HEAD would be interpreted as the entire history.
-                return
-            
-            # List of (base, end, path), from youngest to oldest segment.
-            # All revisions in each segment need importing.
-            self.locations = list()
-            
-            with progress("location history:"):
-                ra.get_location_segments("", end_rev, end_rev, base_rev + 1,
-                    self.on_location)
+            self.uuid = self.ra.get_uuid()
+            segments = PendingSegments(self, base_rev, end_rev)
             
             # Not using RemoteAccess.get_file_revs() because it does not work
             # on directories
@@ -161,48 +151,13 @@ class Repo(object):
             # segment and trailing parts of subsequent segments. Would
             # require remembering all versions of files received.
             
-            prev_rev = None
-            for (self.rev, end, path) in reversed(self.locations):
-                if path:
-                    new_url = "{}/{}".format(repos_root, path)
-                else:
-                    new_url = repos_root
+            prev_rev = None  # Last exported Subversion revision
+            for (base, end, path) in segments:
                 path = "/" + path
-                self.rev = max(self.rev, 0)
-                while self.rev < end:
-                    with progress(path):
-                        if url != new_url:
-                            ra.reparent(new_url)
-                            url = new_url
-                        
-                        if not self.quiet:
-                            stderr.write("@")
-                            stderr.flush()
-                        next = self.rev + 1
-                        self.rev = None
-                        ra.get_log(self.on_revision,
-                            strict_node_history=False, paths=None,
-                            start=next, end=end, limit=1,
-                            # TODO: Changed paths only needed for the first
-                            # revision in each segment
-                            discover_changed_paths=True)
-                        if self.rev is None:
-                            if not self.quiet:
-                                stderr.write("(none)")
-                            break
-                        if not self.quiet:
-                            stderr.write(format(self.rev))
-                            stderr.flush()
-                        
-                        prefix = path.rstrip("/") + "/"
-                        if (not export_copies and
-                        not any(path.startswith(prefix) and
-                        path != prefix for path in self.paths.keys())):
-                            default = (None, None, None)
-                            (_, src, _) = self.paths.get(path, default)
-                            if src is not None:
-                                continue
-                        
+                prefix = path.rstrip("/") + "/"
+                url = (self.repos_root + path).rstrip("/")
+                with iter_revs(self, path, base, end) as revs:
+                    for (rev, date, author, log, paths) in revs:
                         if prev_rev is not None and prev_url is not None:
                             # This is not the first exported revision, and
                             # the previous one was at a different branch
@@ -210,8 +165,8 @@ class Repo(object):
                             # location against the current location. Have to
                             # switch root because the diff reporter does not
                             # accept link_path() on the top-level directory.
-                            ra.reparent(prev_url)
-                            url = prev_url
+                            self.ra.reparent(prev_url)
+                            self.url = prev_url
                         
                         if not self.quiet:
                             stderr.write(":")
@@ -222,7 +177,7 @@ class Repo(object):
                         # from scratch
                         if prev_rev is None:
                             dir = DirEditor(editor)
-                            for (file, (action, _, _)) in self.paths.items():
+                            for (file, (action, _, _)) in paths.items():
                                 if (not file.startswith(prefix) or
                                 action not in "DR"):
                                     continue
@@ -234,10 +189,10 @@ class Repo(object):
                                 else:
                                     dir.delete_entry(file)
                         
-                        reporter = ra.do_diff(self.rev, "", new_url, editor,
+                        reporter = self.ra.do_diff(rev, "", url, editor,
                             True, True, True)
                         if prev_rev is None:
-                            reporter.set_path("", self.rev, True)
+                            reporter.set_path("", rev, True)
                         else:
                             reporter.set_path("", prev_rev, False)
                         
@@ -251,27 +206,26 @@ class Repo(object):
                         line = "commit {}\n".format(git_ref)
                         self.export.file.write(line.encode("utf-8"))
                         
-                        date = time_from_cstring(self.date) // 10**6
+                        date = time_from_cstring(date) // 10**6
                         
                         if author_map is None:
-                            author = ("{0.author} <{0.author}@{0.uuid}>".
-                                format(self))
+                            author = "{author} <{author}@{uuid}>".format(
+                                author=author, uuid=self.uuid)
                         else:
-                            author = author_map[self.author]
+                            author = author_map[author]
                         
                         line = "committer {} {} +0000\n".format(author, date)
                         self.export.file.write(line.encode("utf-8"))
                         
                         log = "{}\n\ngit-svn-id: {}{}@{} {}\n".format(
-                            self.log, root, path.rstrip("/"), self.rev,
-                            self.uuid)
+                            log, root, path.rstrip("/"), rev, self.uuid)
                         log = log.encode("utf-8")
                         line = "data {}\n".format(len(log))
                         self.export.file.write(line.encode("ascii"))
                         self.export.file.writelines((log, b"\n"))
                         
                         if (prev_rev is None and
-                        self.rev > 1 and not log_new_path(self.paths, path)):
+                        rev > 1 and not log_new_path(paths, path)):
                             line = "from {}\n".format(git_ref)
                             self.export.file.write(line.encode("utf-8"))
                         
@@ -280,22 +234,99 @@ class Repo(object):
                             self.export.file.writelines((line, b"\n"))
                         self.export.file.write(b"\n")
                         
-                        prev_rev = self.rev
+                        prev_rev = rev
                         
                         # Last exported location is current location
                         prev_url = None
                 
                 # Save URL of last location that was exported
                 if prev_rev is not None and prev_url is None:
-                    prev_url = new_url
+                    prev_url = url
+
+class PendingSegments:
+    def __init__(self, exporter, base_rev, end_rev):
+        self.exporter = exporter
+        
+        # List of (base, end, path), from youngest to oldest segment.
+        # All revisions in each segment need importing.
+        self.segments = list()
+        
+        if end_rev == base_rev:
+            # RemoteAccess.get_location_segments() does not support an empty
+            # range, so handle this as a special case. Also, HEAD:HEAD would
+            # be interpreted as the entire history.
+            return
+        
+        with self.exporter.progress("location history:"):
+            self.exporter.ra.get_location_segments("", end_rev,
+                end_rev, base_rev + 1, self.on_segment)
     
-    def on_location(self, start, end, path):
+    def on_segment(self, start, end, path):
         if path is None:
             return
-        if not self.quiet:
+        if not self.exporter.quiet:
             stderr.write("\n  /{}:{}-{}".format(path, start, end))
             stderr.flush()
-        self.locations.append((start - 1, end, path))
+        self.segments.append((start - 1, end, path))
+    
+    def __iter__(self):
+        return reversed(self.segments)
+
+def iter_revs(*pos, **kw):
+    return closing(iter(ExportRevs(*pos, **kw)))
+
+class ExportRevs:
+    def __init__(self, exporter, path, base, end):
+        self.exporter = exporter
+        self.path = path
+        self.prefix = self.path.rstrip("/") + "/"
+        self.url = (self.exporter.repos_root + self.path).rstrip("/")
+        self.rev = max(base, 0)
+        self.end = end
+    
+    def __iter__(self):
+        """
+        Always ensures the RA object is parented at the branch location of
+        interest before yielding."""
+        
+        while self.rev < self.end:
+            with self.exporter.progress(self.path):
+                if self.exporter.url != self.url:
+                    self.exporter.ra.reparent(self.url)
+                    self.exporter.url = self.url
+                
+                if not self.exporter.quiet:
+                    stderr.write("@")
+                    stderr.flush()
+                next = self.rev + 1
+                self.rev = None
+                self.exporter.ra.get_log(self.on_revision,
+                    strict_node_history=False, paths=None,
+                    start=next, end=self.end, limit=1,
+                    
+                    # TODO: Changed paths only needed for the first revision
+                    # in each segment
+                    discover_changed_paths=True,
+                )
+                
+                if self.rev is None:
+                    if not self.exporter.quiet:
+                        stderr.write("(none)")
+                    break
+                if not self.exporter.quiet:
+                    stderr.write(format(self.rev))
+                    stderr.flush()
+                
+                if (not self.exporter.export_copies and
+                not any(path.startswith(self.prefix) and
+                path != self.prefix for path in self.paths.keys())):
+                    default = (None, None, None)
+                    (_, src, _) = self.paths.get(self.path, default)
+                    if src is not None:
+                        continue
+                
+                yield (self.rev, self.date, self.author, self.log,
+                    self.paths)
     
     def on_revision(self, paths, rev, props, children=False):
         self.paths = paths
