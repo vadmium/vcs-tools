@@ -30,6 +30,7 @@ from subvertpy.properties import (
     PROP_REVISION_AUTHOR,
     PROP_REVISION_LOG,
     PROP_EXECUTABLE,
+    PROP_MERGEINFO,
 )
 from sys import stderr, argv, exc_info
 from subvertpy.properties import time_from_cstring
@@ -45,6 +46,7 @@ import subvertpy.ra
 from collections import defaultdict
 from bisect import bisect_right, bisect_left
 from contextlib import closing
+from subvertpy.properties import parse_mergeinfo_property
 from misc import Context
 
 INVALID_REVNUM = -1
@@ -497,10 +499,12 @@ class RevEditor(Editor):
         self.output = output
         self.quiet = quiet
         self.edits = list()
+        self.mergeinfo = dict()
+    
     def set_target_revision(self, rev):
         pass
     def open_root(self, base):
-        return DirEditor(self)
+        return RootEditor(self)
     def abort(self):
         pass
 
@@ -539,6 +543,18 @@ class DirEditor(NodeEditor):
             stderr.writelines(("\n  D ", path))
             stderr.flush()
         self.rev.edits.append("D {}".format(path))
+
+class RootEditor(DirEditor):
+    def change_prop(self, name, value):
+        if name == PROP_MERGEINFO:
+            for (path, ranges) in parse_mergeinfo_property(value).items():
+                inhranges = list()
+                for range in ranges:
+                    (_, _, inheritable) = range
+                    if inheritable:
+                        inhranges.append(range)
+                if inhranges:
+                    self.rev.mergeinfo[path] = inhranges
 
 class FileEditor(NodeEditor):
     def __init__(self, path, rev, original=(None, "644")):
