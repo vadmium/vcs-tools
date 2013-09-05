@@ -350,7 +350,7 @@ class ExecutableRa:
             revnum -= 1
     
     def get_location_segments(self, path, peg, start, end, rcvr):
-        rcvr(end, 2, path)
+        rcvr(0, 2, "")
     
     def get_log(self, callback, paths, start, *pos, **kw):
         changes = self.revs[start - 1]["changes"]
