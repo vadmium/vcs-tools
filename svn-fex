@@ -22,7 +22,7 @@ It does not:
 * do anything with special Subversion file or revision properties
 """
 
-from subvertpy.ra import (RemoteAccess, Auth, get_username_provider)
+from subvertpy.ra import RemoteAccess, Auth, get_username_provider
 from subvertpy.delta import apply_txdelta_window
 from subvertpy.properties import (
     PROP_REVISION_DATE,
@@ -41,6 +41,8 @@ from funcparams import splitdoc
 from errno import EPIPE
 from contextlib import contextmanager
 import subvertpy.ra
+from collections import defaultdict
+from bisect import bisect_right, bisect_left
 from contextlib import closing
 from misc import Context
 
@@ -50,7 +52,7 @@ def main():
     (summary, _) = splitdoc(__doc__)
     parser = argparse.ArgumentParser(description=summary)
     
-    parser.add_argument("url", help="subversion URL")
+    parser.add_argument("url", metavar="url[@rev]", help="subversion URL")
     
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--file",
@@ -60,10 +62,9 @@ def main():
     
     parser.add_argument("--git-ref", required=True, metavar="REFNAME",
         help="Git ref name to export to (e.g. refs/remotes/svn/trunk)")
-    parser.add_argument("-r", "--revision", metavar="BASE:END",
-        default="0:HEAD", help="""subversion revisions to look up (default:
-        0:HEAD). If the range does not begin at zero, the existing Git branch
-        is assumed to match.""")
+    parser.add_argument("--rev-map", action="append", default=list(),
+        metavar="BRANCH@SVN-REV:GIT-REV", help="""add a mapping from a
+        Subversion path and revision to an existing Git revision""")
     parser.add_argument("-A", "--authors-file", metavar="FILENAME", help=
         'file mapping Subversion user names to Git authors, like "git-svn"')
     parser.add_argument("--rewrite-root",
@@ -77,12 +78,19 @@ def main():
     
     args = parser.parse_args()
     
-    (base_rev, end_rev) = args.revision.split(":")
-    base_rev = parse_svn_rev(base_rev)
-    end_rev = parse_svn_rev(end_rev)
-    if (base_rev == INVALID_REVNUM or
-    end_rev != INVALID_REVNUM and end_rev < base_rev):
-        (base_rev, end_rev) = (end_rev, base_rev)
+    (url, _, peg_rev) = args.url.rpartition("@")
+    if url:
+        peg_rev = int(peg_rev)
+    else:
+        url = peg_rev
+        peg_rev = INVALID_REVNUM
+    
+    rev_map = defaultdict(dict)
+    for s in args.rev_map:
+        (s, gitrev) = s.rsplit(":", 1)
+        (branch, svnrev) = s.rsplit("@", 1)
+        svnrev = int(svnrev)
+        rev_map[branch][svnrev] = gitrev
     
     if args.authors_file is not None:
         author_map = dict()
@@ -96,8 +104,9 @@ def main():
         author_map = None
     
     try:
-        Repo(args.url, args.git_ref, file=args.file, importer=args.importer,
-            base_rev=base_rev, end_rev=end_rev,
+        Repo(url, args.git_ref, file=args.file, importer=args.importer,
+            peg_rev=peg_rev,
+            rev_map=rev_map,
             author_map=author_map,
             root=args.rewrite_root,
             ignore=args.ignore,
@@ -110,7 +119,8 @@ def main():
 
 class Repo(object):
     def __init__(self, url, git_ref, file=None, importer=(),
-        base_rev=0, end_rev=INVALID_REVNUM,
+        peg_rev=INVALID_REVNUM,
+        rev_map={},
         author_map=None,
         root=None,
         ignore=(),
@@ -118,6 +128,22 @@ class Repo(object):
         quiet=False,
     ):
         self.export_copies = export_copies
+        
+        known_branches = dict()
+        for (branch, revs) in rev_map.items():
+            starts = list()
+            runs = list()
+            known_branches[branch] = (starts, runs)
+            start = None
+            run = ()
+            for (svnrev, gitrev) in sorted(revs.items()):
+                if svnrev - len(run) != start:
+                    start = svnrev
+                    starts.append(start)
+                    run = list()
+                    runs.append(run)
+                run.append(gitrev)
+        
         self.quiet = quiet
         if self.quiet:
             self.progress = dummycontext
@@ -143,7 +169,7 @@ class Repo(object):
                 root = self.repos_root
             
             self.uuid = self.ra.get_uuid()
-            segments = PendingSegments(self, base_rev, end_rev)
+            segments = PendingSegments(self, peg_rev, known_branches)
             
             # Not using RemoteAccess.get_file_revs() because it does not work
             # on directories
@@ -225,10 +251,16 @@ class Repo(object):
                         self.export.file.write(line.encode("ascii"))
                         self.export.file.writelines((log, b"\n"))
                         
-                        if (prev_rev is None and
-                        rev > 1 and not log_new_path(paths, path)):
-                            line = "from {}\n".format(git_ref)
-                            self.export.file.write(line.encode("utf-8"))
+                        if prev_rev is None:
+                            (prev_path, prev_rev) = log_get_parent(
+                                rev, paths, path)
+                            if prev_rev:
+                                branch = path.lstrip("/")
+                                (starts, runs) = known_branches[branch]
+                                i = bisect_left(starts, prev_rev) - 1
+                                git_rev = runs[i][prev_rev - starts[i]]
+                                line = "from {}\n".format(git_rev)
+                                self.export.file.write(line.encode("utf-8"))
                         
                         for line in editor.edits:
                             line = line.encode("utf-8")
@@ -245,22 +277,20 @@ class Repo(object):
                     prev_url = url
 
 class PendingSegments:
-    def __init__(self, exporter, base_rev, end_rev):
+    def __init__(self, exporter, rev, known_branches):
         self.exporter = exporter
+        self.known_branches = known_branches
         
         # List of (base, end, path), from youngest to oldest segment.
         # All revisions in each segment need importing.
         self.segments = list()
         
-        if end_rev == base_rev:
-            # RemoteAccess.get_location_segments() does not support an empty
-            # range, so handle this as a special case. Also, HEAD:HEAD would
-            # be interpreted as the entire history.
-            return
-        
         with self.exporter.progress("location history:"):
-            self.exporter.ra.get_location_segments("", end_rev,
-                end_rev, base_rev + 1, self.on_segment)
+            try:
+                self.exporter.ra.get_location_segments("", rev,
+                    rev, INVALID_REVNUM, self.on_segment)
+            except StopIteration:
+                pass
     
     def on_segment(self, start, end, path):
         if path is None:
@@ -268,6 +298,28 @@ class PendingSegments:
         if not self.exporter.quiet:
             stderr.write("\n  /{}:{}-{}".format(path, start, end))
             stderr.flush()
+        
+        (kstarts, runs) = self.known_branches.get(path, ((), ()))
+        i = bisect_right(kstarts, end)
+        # Only kstarts[:i] are all <= end. If it exists, kstart[i] > end.
+        
+        if i:
+            # Already imported segment at index i - 1 might overlap
+            
+            # First revision to import
+            kend = kstarts[i - 1] + len(runs[i - 1])
+            if kend > start:
+                # Not all revisions in segment are younger
+                
+                if kend <= end:
+                    # Part of segment is younger, thus still needs importing
+                    self.segments.append((kend - 1, end, path))
+                # else: No part of segment is younger
+                
+                raise StopIteration()
+            # else: Entire segment is younger: import all revisions
+        # else: Nothing imported yet
+        
         self.segments.append((start - 1, end, path))
     
     def __iter__(self):
@@ -520,26 +572,27 @@ class DeltaWindowHandler(object):
             chunk = apply_txdelta_window(self.sbuf, chunk)
             self.target_buf.extend(chunk)
 
-def parse_svn_rev(rev):
-    if rev.upper() == "HEAD":
-        return INVALID_REVNUM
-    return int(rev)
-
-def log_new_path(changes, path):
-    """See if a path has no prior history"""
+def log_get_parent(rev, changes, path):
+    """Get the path and revision that the given path was based on
+    
+    * If the path was copied with history, return (path, rev) of where it was
+        copied from
+    * If the path was added without history, return ("/", 0)
+    * If the path evolved normally from the previous revision, return (path,
+        rev - 1)"""
     
     parent = len(path.rstrip("/"))
     while parent >= 0:
         change = changes.get(path[:parent] or "/")
         if change:
-            (action, src, _) = change
+            (action, src, srcrev) = change
             if src is not None:  # Copy with history
-                return False
+                return (src + path[parent:], srcrev)
             if action in "AR":  # Add without history
-                return True
+                return ("/", 0)
         parent = path.rfind("/", 0, parent)
     else:  # Branch not copied
-        return False
+        return (path, rev - 1)
 
 class FileArray(object):
     def __init__(self, file, pos, len):

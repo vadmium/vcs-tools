@@ -138,7 +138,8 @@ git-svn-id: /trunk@2 00000000-0000-0000-0000-000000000000
         url = "file://{}".format(pathname2url(repo))
         export = os.path.join(self.dir, "export")
         self.svn_fex["Repo"](url, "refs/ref", file=export, root="",
-            base_rev=1, ignore=("igfile", "igdir"), quiet=True)
+            rev_map={"": {1: "refs/ref"}}, ignore=("igfile", "igdir"),
+            quiet=True)
         with open(export, "r", encoding="ascii") as export:
             self.assertMultiLineEqual("""\
 commit refs/ref
