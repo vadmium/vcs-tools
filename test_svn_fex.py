@@ -119,13 +119,21 @@ git-svn-id: /trunk@2 00000000-0000-0000-0000-000000000000
         repo = self.make_repo((
             dict(nodes=(
                 dict(action="add", path="file", kind="file", content=b""),
+                dict(action="add", path="igfile", kind="file", content=b""),
+                dict(action="add", path="igdir/", kind="dir"),
+                dict(action="add", path="igdir/file", kind="file",
+                    content=b""),
             )),
-            dict(nodes=(dict(action="delete", path="file"),)),
+            dict(nodes=(
+                dict(action="delete", path="file"),
+                dict(action="delete", path="igfile"),
+                dict(action="delete", path="igdir/file"),
+            )),
         ))
         url = "file://{}".format(pathname2url(repo))
         export = os.path.join(self.dir, "export")
         self.svn_fex["Repo"](url, "ref", file=export, root="", base_rev=1,
-            quiet=True)
+            ignore=("igfile", "igdir"), quiet=True)
         with open(export, "rb") as export:
             self.assertMultiLineEqual(b"""\
 commit refs/ref
