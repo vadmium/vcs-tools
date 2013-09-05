@@ -162,6 +162,7 @@ class Repo(object):
                 else:
                     new_url = repos_root
                 path = "/" + path
+                self.rev = max(self.rev, 0)
                 while self.rev < end:
                     with progress(path):
                         if url != new_url:
