@@ -42,6 +42,7 @@ from errno import EPIPE
 from contextlib import contextmanager
 import subvertpy.ra
 from contextlib import closing
+from misc import Context
 
 INVALID_REVNUM = -1
 
@@ -335,7 +336,7 @@ class ExportRevs:
         self.author = props.get(PROP_REVISION_AUTHOR, "(no author)")
         self.log = props[PROP_REVISION_LOG]
 
-class FastExport(object):
+class FastExport(Context):
     def __init__(self, *pos, **kw):
         try:
             self.files = dict()
@@ -345,8 +346,6 @@ class FastExport(object):
             raise
     def open(self):
         pass
-    def __enter__(self):
-        return self
     
     def blob(self, path, buf):
         blob = self.blob_header(path, buf)
@@ -376,8 +375,8 @@ class FastExportFile(FastExport):
         FastExport.__init__(self)
     def open(self):
         self.file.tell()  # Make sure it is seekable
-    def __exit__(self, *exc):
-        self.file.close()
+    def close(self):
+        return self.file.close()
     
     def blob(self, path, buf):
         self.file.seek(0, SEEK_END)
