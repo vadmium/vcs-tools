@@ -104,23 +104,27 @@ def main():
     else:
         author_map = None
     
-    try:
-        Repo(url, args.git_ref, file=args.file, importer=args.importer,
-            peg_rev=peg_rev,
-            rev_map=rev_map,
-            author_map=author_map,
-            root=args.rewrite_root,
-            ignore=args.ignore,
-            export_copies=args.export_copies,
-            quiet=args.quiet,
-        )
-    except SubversionException as err:
-        (msg, _) = err.args
-        raise SystemExit(msg)
+    if args.importer:
+        output = FastExportPipe(args.importer)
+    else:
+        output = FastExportFile(args.file)
+    with output:
+        try:
+            exporter = Exporter(url, output,
+                rev_map=rev_map,
+                author_map=author_map,
+                root=args.rewrite_root,
+                ignore=args.ignore,
+                export_copies=args.export_copies,
+                quiet=args.quiet,
+            )
+            exporter.export(args.git_ref, rev=peg_rev)
+        except SubversionException as err:
+            (msg, _) = err.args
+            raise SystemExit(msg)
 
-class Repo(object):
-    def __init__(self, url, git_ref, file=None, importer=(),
-        peg_rev=INVALID_REVNUM,
+class Exporter:
+    def __init__(self, url, output,
         rev_map={},
         author_map=None,
         root=None,
@@ -128,13 +132,16 @@ class Repo(object):
         export_copies=False,
         quiet=False,
     ):
+        self.output = output
+        self.author_map = author_map
+        self.ignore = ignore
         self.export_copies = export_copies
         
-        known_branches = dict()
+        self.known_branches = dict()
         for (branch, revs) in rev_map.items():
             starts = list()
             runs = list()
-            known_branches[branch] = (starts, runs)
+            self.known_branches[branch] = (starts, runs)
             start = None
             run = ()
             for (svnrev, gitrev) in sorted(revs.items()):
@@ -151,136 +158,133 @@ class Repo(object):
         else:
             self.progress = progresscontext
         
-        if importer:
-            self.export = FastExportPipe(importer)
+        # Auth stuff avoids the following error for diffs on local (file:)
+        # URLs: "No provider registered for 'svn.username' credentials"
+        auth = Auth((get_username_provider(),))
+        
+        with self.progress("connecting to ", url):
+            self.ra = RemoteAccess(url, auth=auth)
+            self.url = url
+        
+        self.repos_root = self.ra.get_repos_root()
+        if root is None:
+            self.root = self.repos_root
         else:
-            self.export = FastExportFile(file)
-        with self.export:
-            # Auth stuff avoids the following error for diffs on local
-            # (file:) URLs: "No provider registered for 'svn.username'
-            # credentials"
-            auth = Auth((get_username_provider(),))
+            self.root = root
+        
+        self.uuid = self.ra.get_uuid()
+    
+    def export(self, git_ref, rev=INVALID_REVNUM):
+        segments = PendingSegments(self, rev)
+        
+        # Not using RemoteAccess.get_file_revs() because it does not work on
+        # directories
+        
+        # TODO: Use RemoteAccess.replay_range() for initial location segment
+        # and trailing parts of subsequent segments. Would require
+        # remembering all versions of files received.
+        
+        prev_rev = None  # Last exported Subversion revision
+        for (base, end, path) in segments:
+            path = "/" + path
+            prefix = path.rstrip("/") + "/"
+            url = (self.repos_root + path).rstrip("/")
+            with iter_revs(self, path, base, end) as revs:
+                for (rev, date, author, log, paths) in revs:
+                    if prev_rev is not None and prev_url is not None:
+                        # This is not the first exported revision, and the
+                        # previous one was at a different branch location.
+                        # Will have to diff the previous location against the
+                        # current location. Have to switch root because the
+                        # diff reporter does not accept link_path() on the
+                        # top-level directory.
+                        self.ra.reparent(prev_url)
+                        self.url = prev_url
+                    
+                    if not self.quiet:
+                        stderr.write(":")
+                        stderr.flush()
+                    editor = RevEditor(self.output, self.quiet)
+                    
+                    # Diff editor does not convey deletions when starting
+                    # from scratch
+                    if prev_rev is None:
+                        dir = DirEditor(editor)
+                        for (file, (action, _, _)) in paths.items():
+                            if (not file.startswith(prefix) or
+                            action not in "DR"):
+                                continue
+                            file = file[len(prefix):]
+                            for p in self.ignore:
+                                if (file == p or
+                                file.startswith((p + "/").lstrip("/"))):
+                                    break
+                            else:
+                                dir.delete_entry(file)
+                    
+                    reporter = self.ra.do_diff(rev, "", url, editor,
+                        True, True, True)
+                    if prev_rev is None:
+                        reporter.set_path("", rev, True)
+                    else:
+                        reporter.set_path("", prev_rev, False)
+                    
+                    for p in self.ignore:
+                        reporter.set_path(p, INVALID_REVNUM, True, None,
+                            subvertpy.ra.DEPTH_EXCLUDE)
+                    
+                    reporter.finish()
+                    # Assume the editor calls are all completed now
+                    
+                    line = "commit {}\n".format(git_ref)
+                    self.output.file.write(line.encode("utf-8"))
+                    
+                    date = time_from_cstring(date) // 10**6
+                    
+                    if self.author_map is None:
+                        author = "{author} <{author}@{uuid}>".format(
+                            author=author, uuid=self.uuid)
+                    else:
+                        author = self.author_map[author]
+                    
+                    line = "committer {} {} +0000\n".format(author, date)
+                    self.output.file.write(line.encode("utf-8"))
+                    
+                    log = "{}\n\ngit-svn-id: {}{}@{} {}\n".format(
+                        log, self.root, path.rstrip("/"), rev, self.uuid)
+                    log = log.encode("utf-8")
+                    line = "data {}\n".format(len(log))
+                    self.output.file.write(line.encode("ascii"))
+                    self.output.file.writelines((log, b"\n"))
+                    
+                    if prev_rev is None:
+                        (prev_path, prev_rev) = log_get_parent(
+                            rev, paths, path)
+                        if prev_rev:
+                            branch = path.lstrip("/")
+                            (starts, runs) = self.known_branches[branch]
+                            i = bisect_left(starts, prev_rev) - 1
+                            git_rev = runs[i][prev_rev - starts[i]]
+                            line = "from {}\n".format(git_rev)
+                            self.output.file.write(line.encode("utf-8"))
+                    
+                    for line in editor.edits:
+                        line = line.encode("utf-8")
+                        self.output.file.writelines((line, b"\n"))
+                    self.output.file.write(b"\n")
+                    
+                    prev_rev = rev
+                    
+                    # Last exported location is current location
+                    prev_url = None
             
-            with self.progress("connecting to ", url):
-                self.ra = RemoteAccess(url, auth=auth)
-                self.url = url
-            
-            self.repos_root = self.ra.get_repos_root()
-            if root is None:
-                root = self.repos_root
-            
-            self.uuid = self.ra.get_uuid()
-            segments = PendingSegments(self, peg_rev, known_branches)
-            
-            # Not using RemoteAccess.get_file_revs() because it does not work
-            # on directories
-            
-            # TODO: Use RemoteAccess.replay_range() for initial location
-            # segment and trailing parts of subsequent segments. Would
-            # require remembering all versions of files received.
-            
-            prev_rev = None  # Last exported Subversion revision
-            for (base, end, path) in segments:
-                path = "/" + path
-                prefix = path.rstrip("/") + "/"
-                url = (self.repos_root + path).rstrip("/")
-                with iter_revs(self, path, base, end) as revs:
-                    for (rev, date, author, log, paths) in revs:
-                        if prev_rev is not None and prev_url is not None:
-                            # This is not the first exported revision, and
-                            # the previous one was at a different branch
-                            # location. Will have to diff the previous
-                            # location against the current location. Have to
-                            # switch root because the diff reporter does not
-                            # accept link_path() on the top-level directory.
-                            self.ra.reparent(prev_url)
-                            self.url = prev_url
-                        
-                        if not self.quiet:
-                            stderr.write(":")
-                            stderr.flush()
-                        editor = RevEditor(self.export, self.quiet)
-                        
-                        # Diff editor does not convey deletions when starting
-                        # from scratch
-                        if prev_rev is None:
-                            dir = DirEditor(editor)
-                            for (file, (action, _, _)) in paths.items():
-                                if (not file.startswith(prefix) or
-                                action not in "DR"):
-                                    continue
-                                file = file[len(prefix):]
-                                for p in ignore:
-                                    if (file == p or
-                                    file.startswith((p + "/").lstrip("/"))):
-                                        break
-                                else:
-                                    dir.delete_entry(file)
-                        
-                        reporter = self.ra.do_diff(rev, "", url, editor,
-                            True, True, True)
-                        if prev_rev is None:
-                            reporter.set_path("", rev, True)
-                        else:
-                            reporter.set_path("", prev_rev, False)
-                        
-                        for p in ignore:
-                            reporter.set_path(p, INVALID_REVNUM, True, None,
-                                subvertpy.ra.DEPTH_EXCLUDE)
-                        
-                        reporter.finish()
-                        # Assume the editor calls are all completed now
-                        
-                        line = "commit {}\n".format(git_ref)
-                        self.export.file.write(line.encode("utf-8"))
-                        
-                        date = time_from_cstring(date) // 10**6
-                        
-                        if author_map is None:
-                            author = "{author} <{author}@{uuid}>".format(
-                                author=author, uuid=self.uuid)
-                        else:
-                            author = author_map[author]
-                        
-                        line = "committer {} {} +0000\n".format(author, date)
-                        self.export.file.write(line.encode("utf-8"))
-                        
-                        log = "{}\n\ngit-svn-id: {}{}@{} {}\n".format(
-                            log, root, path.rstrip("/"), rev, self.uuid)
-                        log = log.encode("utf-8")
-                        line = "data {}\n".format(len(log))
-                        self.export.file.write(line.encode("ascii"))
-                        self.export.file.writelines((log, b"\n"))
-                        
-                        if prev_rev is None:
-                            (prev_path, prev_rev) = log_get_parent(
-                                rev, paths, path)
-                            if prev_rev:
-                                branch = path.lstrip("/")
-                                (starts, runs) = known_branches[branch]
-                                i = bisect_left(starts, prev_rev) - 1
-                                git_rev = runs[i][prev_rev - starts[i]]
-                                line = "from {}\n".format(git_rev)
-                                self.export.file.write(line.encode("utf-8"))
-                        
-                        for line in editor.edits:
-                            line = line.encode("utf-8")
-                            self.export.file.writelines((line, b"\n"))
-                        self.export.file.write(b"\n")
-                        
-                        prev_rev = rev
-                        
-                        # Last exported location is current location
-                        prev_url = None
-                
-                # Save URL of last location that was exported
-                if prev_rev is not None and prev_url is None:
-                    prev_url = url
+            # Save URL of last location that was exported
+            if prev_rev is not None and prev_url is None:
+                prev_url = url
 
 class PendingSegments:
-    def __init__(self, exporter, rev, known_branches):
+    def __init__(self, exporter, rev):
         self.exporter = exporter
-        self.known_branches = known_branches
         
         # List of (base, end, path), from youngest to oldest segment.
         # All revisions in each segment need importing.
@@ -300,7 +304,7 @@ class PendingSegments:
             stderr.write("\n  /{}:{}-{}".format(path, start, end))
             stderr.flush()
         
-        (kstarts, runs) = self.known_branches.get(path, ((), ()))
+        (kstarts, runs) = self.exporter.known_branches.get(path, ((), ()))
         i = bisect_right(kstarts, end)
         # Only kstarts[:i] are all <= end. If it exists, kstart[i] > end.
         
@@ -489,8 +493,8 @@ class Editor(object):
         pass
 
 class RevEditor(Editor):
-    def __init__(self, export, quiet):
-        self.export = export
+    def __init__(self, output, quiet):
+        self.output = output
         self.quiet = quiet
         self.edits = list()
     def set_target_revision(self, rev):
@@ -528,7 +532,7 @@ class DirEditor(NodeEditor):
         if not self.rev.quiet:
             stderr.writelines(("\n  M ", path))
             stderr.flush()
-        return FileEditor(path, self.rev, original=self.rev.export[path])
+        return FileEditor(path, self.rev, original=self.rev.output[path])
     
     def delete_entry(self, path, rev=None):
         if not self.rev.quiet:
@@ -553,21 +557,21 @@ class FileEditor(NodeEditor):
         return DeltaWindowHandler(self)
     
     def close(self):
-        self.rev.export[self.path] = (self.blob, self.mode)
+        self.rev.output[self.path] = (self.blob, self.mode)
         self.rev.edits.append("M {0.mode} {0.blob} {0.path}".format(self))
 
 class DeltaWindowHandler(object):
     def __init__(self, file):
         self.file = file
         if self.file.blob:
-            self.sbuf = self.file.rev.export.cat_blob(self.file.blob)
+            self.sbuf = self.file.rev.output.cat_blob(self.file.blob)
         else:
             self.sbuf = bytes()
         self.target_buf = bytearray()
     
     def __call__(self, chunk):
         if chunk is None:
-            self.file.blob = self.file.rev.export.blob(self.file.path,
+            self.file.blob = self.file.rev.output.blob(self.file.path,
                 self.target_buf)
         else:
             chunk = apply_txdelta_window(self.sbuf, chunk)

@@ -82,10 +82,11 @@ class RepoTests(BaseTest):
             )),
         ))
         url = "file://{}/trunk".format(pathname2url(repo))
-        export = os.path.join(self.dir, "export")
-        self.svn_fex["Repo"](url, "refs/ref", file=export, root="",
-            quiet=True)
-        with open(export, "r", encoding="ascii") as export:
+        output = os.path.join(self.dir, "output")
+        with self.svn_fex["FastExportFile"](output) as fex:
+            exporter = self.svn_fex["Exporter"](url, fex, root="", quiet=True)
+            exporter.export("refs/ref")
+        with open(output, "r", encoding="ascii") as output:
             self.assertMultiLineEqual("""\
 commit refs/ref
 committer (no author) <(no author)@00000000-0000-0000-0000-000000000000> 0 +0000
@@ -104,7 +105,7 @@ git-svn-id: /trunk@2 00000000-0000-0000-0000-000000000000
 
 
 """,
-                export.read())
+                output.read())
     
     def test_authors(self):
         """Authors mapping"""
@@ -114,10 +115,12 @@ git-svn-id: /trunk@2 00000000-0000-0000-0000-000000000000
             )),
         ))
         url = "file://{}".format(pathname2url(repo))
-        export = os.path.join(self.dir, "export")
+        output = os.path.join(self.dir, "output")
         authors = {"user": "user <user>"}
-        self.svn_fex["Repo"](url, "refs/ref", file=export,
-            author_map=authors, quiet=True)
+        with self.svn_fex["FastExportFile"](output) as output:
+            exporter = self.svn_fex["Exporter"](url, output,
+                author_map=authors, quiet=True)
+            exporter.export("refs/ref")
     
     def test_first_delete(self):
         """Detection of deletion in first commit"""
@@ -136,11 +139,13 @@ git-svn-id: /trunk@2 00000000-0000-0000-0000-000000000000
             )),
         ))
         url = "file://{}".format(pathname2url(repo))
-        export = os.path.join(self.dir, "export")
-        self.svn_fex["Repo"](url, "refs/ref", file=export, root="",
-            rev_map={"": {1: "refs/ref"}}, ignore=("igfile", "igdir"),
-            quiet=True)
-        with open(export, "r", encoding="ascii") as export:
+        output = os.path.join(self.dir, "output")
+        with self.svn_fex["FastExportFile"](output) as fex:
+            exporter = self.svn_fex["Exporter"](url, fex, root="",
+                rev_map={"": {1: "refs/ref"}}, ignore=("igfile", "igdir"),
+                quiet=True)
+            exporter.export("refs/ref")
+        with open(output, "r", encoding="ascii") as output:
             self.assertMultiLineEqual("""\
 commit refs/ref
 committer (no author) <(no author)@00000000-0000-0000-0000-000000000000> 0 +0000
@@ -153,7 +158,7 @@ from refs/ref
 D file
 
 """,
-                export.read())
+                output.read())
     
     def test_multiple(self):
         """Modification of multiple files"""
@@ -172,8 +177,10 @@ D file
         subprocess.check_call(("git", "init", "--quiet", "--", git))
         script = 'cd "$1" && git fast-import --quiet'
         importer = ("sh", "-c", script, "--", git)
-        self.svn_fex["Repo"](url, "refs/heads/master", importer=importer,
-            root="", quiet=True)
+        with self.svn_fex["FastExportPipe"](importer) as importer:
+            exporter = self.svn_fex["Exporter"](url, importer, root="",
+                quiet=True)
+            exporter.export("refs/heads/master")
         cmd = ("git", "rev-parse", "--verify", "refs/heads/master")
         rev = subprocess.check_output(cmd, cwd=git).decode("ascii").strip()
         self.assertEqual("82aeb20279a1269f048243a603b141ee0ea204e9", rev)
@@ -181,10 +188,12 @@ D file
     def test_executable(self):
         """Order of setting file mode and contents should not matter"""
         self.svn_fex["main"].__globals__["RemoteAccess"] = ExecutableRa
-        export = os.path.join(self.dir, "export")
-        self.svn_fex["Repo"]("file:///repo", "refs/ref", file=export,
-            quiet=True)
-        with open(export, "r", encoding="ascii") as export:
+        output = os.path.join(self.dir, "output")
+        with self.svn_fex["FastExportFile"](output) as fex:
+            exporter = self.svn_fex["Exporter"]("file:///repo", fex,
+                quiet=True)
+            exporter.export("refs/ref")
+        with open(output, "r", encoding="ascii") as output:
             self.assertMultiLineEqual("""\
 blob
 mark :1
@@ -225,7 +234,7 @@ M 755 :1 file1
 M 755 :2 file2
 
 """,
-                export.read())
+                output.read())
     
     def test_export_copies(self):
         """Test the "--export-copies" mode"""
@@ -241,10 +250,12 @@ M 755 :2 file2
                 content=b"mod\n"),)),
         ))
         url = "file://{}/branch".format(pathname2url(repo))
-        export = os.path.join(self.dir, "export")
-        self.svn_fex["Repo"](url, "refs/branch", file=export, root="",
-            export_copies=True, quiet=True)
-        with open(export, "r", encoding="ascii") as export:
+        output = os.path.join(self.dir, "output")
+        with self.svn_fex["FastExportFile"](output) as fex:
+            exporter = self.svn_fex["Exporter"](url, fex, root="",
+                export_copies=True, quiet=True)
+            exporter.export("refs/branch")
+        with open(output, "r", encoding="ascii") as output:
             self.assertMultiLineEqual("""\
 blob
 mark :1
@@ -282,7 +293,7 @@ git-svn-id: /branch@3 00000000-0000-0000-0000-000000000000
 M 644 :1 file
 
 """,
-                export.read())
+                output.read())
 
 def executable_add(editor):
     root = editor.open_root(0)
@@ -386,7 +397,7 @@ class TestAuthorsFile(BaseTest):
         argv = ["svn-fex", "--git-ref", "refs/ref", "--authors", authors,
             "--file", output, "file:///dummy"]
         with substattr(sys, "argv", argv):
-            self.svn_fex["main"].__globals__["Repo"] = self.Repo
+            self.svn_fex["main"].__globals__["Exporter"] = self.Exporter
             self.svn_fex["main"]()
         
         self.assertEqual(dict(
@@ -394,8 +405,13 @@ class TestAuthorsFile(BaseTest):
             tricky="E = mc squared",
         ), self.author_map)
     
-    def Repo(self, *pos, author_map, **kw):
+    def Exporter(self, *pos, author_map, **kw):
         self.author_map = author_map
+        return self.MockExporter()
+    
+    class MockExporter:
+        def export(self, *pos, **kw):
+            pass
 
 def dump_message(file, headers, props=None, content=None):
     msg = Message()
