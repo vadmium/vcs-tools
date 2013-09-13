@@ -484,12 +484,15 @@ class FileArray(object):
         self.file = file
         self.pos = pos
         self.len = len
+    
     def __getitem__(self, slice):
         return FileArray(self.file,
             self.pos + slice.start, slice.stop - slice.start)
-    def __radd__(self, str):
+    
+    def __iter__(self):
         self.file.seek(self.pos)
-        return str + self.file.read(self.len)
+        return iter(self.file.read(self.len))
+    
     def __repr__(self):
         return "{}({}, {}, {})".format(type(self).__name__,
             self.file, self.pos, self.len)
