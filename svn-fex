@@ -373,8 +373,6 @@ class FastExportFile(FastExport):
         self.filedata = dict()
         self.file = open(file, "w+b")
         FastExport.__init__(self)
-    def open(self):
-        self.file.tell()  # Make sure it is seekable
     def close(self):
         return self.file.close()
     
