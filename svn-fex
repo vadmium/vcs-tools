@@ -186,22 +186,23 @@ class Exporter:
         # and trailing parts of subsequent segments. Would require
         # remembering all versions of files received.
         
-        prev_rev = None  # Last exported Subversion revision
+        (base_rev, base_path) = segments.base
+        init_export = True
         for (base, end, path) in segments:
             path = "/" + path
             prefix = path.rstrip("/") + "/"
             url = (self.repos_root + path).rstrip("/")
             with iter_revs(self, path, base, end) as revs:
                 for (rev, date, author, log, paths) in revs:
-                    if prev_rev is not None and prev_url is not None:
-                        # This is not the first exported revision, and the
-                        # previous one was at a different branch location.
-                        # Will have to diff the previous location against the
+                    if not init_export and base_path != path[1:]:
+                        # Base revision is at a different branch location.
+                        # Will have to diff the base location against the
                         # current location. Have to switch root because the
                         # diff reporter does not accept link_path() on the
                         # top-level directory.
-                        self.ra.reparent(prev_url)
-                        self.url = prev_url
+                        self.url = self.repos_root + "/" + base_path
+                        self.url = self.url.rstrip("/")
+                        self.ra.reparent(self.url)
                     
                     if not self.quiet:
                         stderr.write(":")
@@ -210,7 +211,7 @@ class Exporter:
                     
                     # Diff editor does not convey deletions when starting
                     # from scratch
-                    if prev_rev is None:
+                    if init_export:
                         dir = DirEditor(editor)
                         for (file, (action, _, _)) in paths.items():
                             if (not file.startswith(prefix) or
@@ -226,10 +227,10 @@ class Exporter:
                     
                     reporter = self.ra.do_diff(rev, "", url, editor,
                         True, True, True)
-                    if prev_rev is None:
+                    if init_export:
                         reporter.set_path("", rev, True)
                     else:
-                        reporter.set_path("", prev_rev, False)
+                        reporter.set_path("", base_rev, False)
                     
                     for p in self.ignore:
                         reporter.set_path(p, INVALID_REVNUM, True, None,
@@ -259,30 +260,18 @@ class Exporter:
                     self.output.file.write(line.encode("ascii"))
                     self.output.file.writelines((log, b"\n"))
                     
-                    if prev_rev is None:
-                        (prev_path, prev_rev) = log_get_parent(
-                            rev, paths, path)
-                        if prev_rev:
-                            branch = path.lstrip("/")
-                            (starts, runs) = self.known_branches[branch]
-                            i = bisect_left(starts, prev_rev) - 1
-                            git_rev = runs[i][prev_rev - starts[i]]
-                            line = "from {}\n".format(git_rev)
-                            self.output.file.write(line.encode("utf-8"))
+                    if init_export and base_rev:
+                        line = "from {}\n".format(segments.git_base)
+                        self.output.file.write(line.encode("utf-8"))
                     
                     for line in editor.edits:
                         line = line.encode("utf-8")
                         self.output.file.writelines((line, b"\n"))
                     self.output.file.write(b"\n")
                     
-                    prev_rev = rev
-                    
-                    # Last exported location is current location
-                    prev_url = None
-            
-            # Save URL of last location that was exported
-            if prev_rev is not None and prev_url is None:
-                prev_url = url
+                    base_rev = rev
+                    base_path = path[1:]
+                    init_export = False
 
 class PendingSegments:
     def __init__(self, exporter, rev):
@@ -298,6 +287,8 @@ class PendingSegments:
                     rev, INVALID_REVNUM, self.on_segment)
             except StopIteration:
                 pass
+            else:
+                self.base = (0, "")  # No revisions are already exported
     
     def on_segment(self, start, end, path):
         if path is None:
@@ -312,17 +303,18 @@ class PendingSegments:
         
         if i:
             # Already imported segment at index i - 1 might overlap
-            
-            # First revision to import
-            kend = kstarts[i - 1] + len(runs[i - 1])
-            if kend > start:
-                # Not all revisions in segment are younger
+            run = runs[i - 1]
+            base = kstarts[i - 1] + len(run) - 1  # Last imported revision
+            if base >= start:
+                # Not all revisions in segment are younger than base revision
                 
-                if kend <= end:
+                if base < end:
                     # Part of segment is younger, thus still needs importing
-                    self.segments.append((kend - 1, end, path))
+                    self.segments.append((base, end, path))
                 # else: No part of segment is younger
                 
+                self.base = (base, path)
+                self.git_base = run[-1]
                 raise StopIteration()
             # else: Entire segment is younger: import all revisions
         # else: Nothing imported yet
@@ -592,28 +584,6 @@ class DeltaWindowHandler(object):
         else:
             chunk = apply_txdelta_window(self.sbuf, chunk)
             self.target_buf.extend(chunk)
-
-def log_get_parent(rev, changes, path):
-    """Get the path and revision that the given path was based on
-    
-    * If the path was copied with history, return (path, rev) of where it was
-        copied from
-    * If the path was added without history, return ("/", 0)
-    * If the path evolved normally from the previous revision, return (path,
-        rev - 1)"""
-    
-    parent = len(path.rstrip("/"))
-    while parent >= 0:
-        change = changes.get(path[:parent] or "/")
-        if change:
-            (action, src, srcrev) = change
-            if src is not None:  # Copy with history
-                return (src + path[parent:], srcrev)
-            if action in "AR":  # Add without history
-                return ("/", 0)
-        parent = path.rfind("/", 0, parent)
-    else:  # Branch not copied
-        return (path, rev - 1)
 
 class FileArray(object):
     def __init__(self, file, pos, len):
