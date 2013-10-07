@@ -239,6 +239,16 @@ class Exporter:
                     reporter.finish()
                     # Assume the editor calls are all completed now
                     
+                    if editor.mergeinfo:
+                        ancestors = Ancestors(self)
+                        if base_rev:
+                            ancestors.add_natural(base_path, base_rev)
+                        mergeinfo = editor.mergeinfo.items()
+                        for (branch, ranges) in mergeinfo:
+                            branch = branch.lstrip("/")
+                            for (start, end, _) in ranges:
+                                ancestors.add_natural(branch, end)
+                    
                     line = "commit {}\n".format(git_ref)
                     self.output.file.write(line.encode("utf-8"))
                     
@@ -374,6 +384,34 @@ class ExportRevs:
         self.date = props[PROP_REVISION_DATE]
         self.author = props.get(PROP_REVISION_AUTHOR, "(no author)")
         self.log = props[PROP_REVISION_LOG]
+
+class Ancestors:
+    def __init__(self, exporter):
+        self.exporter = exporter
+        self.branches = defaultdict(list)
+    
+    def add_natural(self, branch, rev):
+        # TODO: global cache
+        root_len = len(self.exporter.repos_root)
+        prefix = (self.exporter.url + "/")[root_len + 1:]
+        if (branch + "/").startswith(prefix):
+            branch = branch[len(prefix):]
+        else:
+            self.exporter.ra.reparent(self.exporter.repos_root)
+            self.exporter.url = self.exporter.repos_root
+        get_location_segments(self.exporter, self.on_segment, branch, rev)
+    
+    def on_segment(self, start, end, path):
+        ranges = self.branches[path]
+        i = bisect_left(ranges, (start, 0, True))
+        # If it exists, ranges[i] is the first >= start
+        if i < len(ranges):
+            (rstart, rend, inheritable) = ranges[i]
+            if rstart == start:
+                ranges[i] = (rstart, max(rend, end), inheritable)
+                raise StopIteration()
+        
+        ranges.insert(i, (start, end, True))
 
 class get_location_segments:
     def __init__(self, exporter, callback, path="", rev=INVALID_REVNUM):
