@@ -17,9 +17,10 @@ from subvertpy.properties import (
 from email.message import Message
 from io import BytesIO
 from email.generator import BytesGenerator
-import subvertpy.delta
+import subvertpy.delta, subvertpy.repos
 from functools import partial
 from shorthand import substattr
+from streams import dummywriter
 import sys
 
 class BaseTest(TestCase):
@@ -39,12 +40,9 @@ class BaseTest(TestCase):
 
 class RepoTests(BaseTest):
     def make_repo(self, revs):
-        repo = os.path.join(self.dir, "repo")
-        subprocess.check_call(("svnadmin", "create", repo))
-        proc = Popen(("svnadmin", "load", "--quiet", repo),
-            stdin=subprocess.PIPE)
-        dump_message(proc.stdin, (("SVN-fs-dump-format-version", "2"),))
-        dump_message(proc.stdin, (
+        dump = BytesIO()
+        dump_message(dump, (("SVN-fs-dump-format-version", "2"),))
+        dump_message(dump, (
             ("UUID", "00000000-0000-0000-0000-000000000000"),))
         
         for (i, rev) in enumerate(revs, 1):
@@ -54,7 +52,7 @@ class RepoTests(BaseTest):
             }
             props.update(rev.get("props", ()))
             headers = (("Revision-number", format(i)),)
-            dump_message(proc.stdin, headers, props=props)
+            dump_message(dump, headers, props=props)
             
             for node in rev.get("nodes", {}):
                 headers = list()
@@ -65,13 +63,15 @@ class RepoTests(BaseTest):
                     value = node.get(name.replace("-", "_"))
                     if value is not None:
                         headers.append(("Node-" + name, format(value)))
-                dump_message(proc.stdin, headers,
+                dump_message(dump, headers,
                     props=node.get("props"), content=node.get("content"))
         
-        proc.communicate()
-        if proc.returncode:
-            raise SystemExit(proc.returncode)
-        return repo
+        dump.seek(0)
+        path = os.path.join(self.dir, "repos")
+        repos = subvertpy.repos.create(path)
+        repos.load_fs(dump, feedback_stream=dummywriter,
+            uuid_action=subvertpy.repos.LOAD_UUID_DEFAULT)
+        return path
     
     def test_modify_branch(self):
         """Modification of branch directory properties"""
