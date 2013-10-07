@@ -247,11 +247,16 @@ class Exporter:
                         ancestors = Ancestors(self)
                         if base_rev:
                             ancestors.add_natural(base_path, base_rev)
+                        merged = RevisionSet()
+                        merged.update(ancestors)
                         mergeinfo = editor.mergeinfo.items()
                         for (branch, ranges) in mergeinfo:
                             branch = branch.lstrip("/")
                             for (start, end, _) in ranges:
+                                merged.add_segment(branch, start, end)
                                 ancestors.add_natural(branch, end)
+                        if ancestors == merged:
+                            ...
                     
                     line = "commit {}\n".format(git_ref)
                     self.output.file.write(line.encode("utf-8"))
@@ -389,10 +394,42 @@ class ExportRevs:
         self.author = props.get(PROP_REVISION_AUTHOR, "(no author)")
         self.log = props[PROP_REVISION_LOG]
 
-class Ancestors:
+class RevisionSet:
+    def __init__(self):
+        self.branches = defaultdict(list)
+    
+    def update(self, other):
+        for (branch, ranges) in other.branches.items():
+            self.branches[branch] = list(ranges)
+    
+    def add_segment(self, branch, start, end):
+        ranges = self.branches[branch]
+        i = bisect_left(ranges, (start, 0, True))
+        
+        starti = i
+        if i > 0:
+            (rstart, rend, _) = ranges[i - 1]
+            if rend + 1 >= start:
+                start = rstart
+                end = max(end, rend)
+                starti = i - 1
+        
+        stopi = i
+        if i < len(ranges):
+            (rstart, rend, _) = ranges[i]
+            if rstart <= end + 1:
+                end = max(end, rend)
+                stopi = i + 1
+        
+        ranges[starti:stopi] = ((start, end, True),)
+    
+    def __eq__(self, other):
+        return self.branches == other.branches
+
+class Ancestors(RevisionSet):
     def __init__(self, exporter):
         self.exporter = exporter
-        self.branches = defaultdict(list)
+        RevisionSet.__init__(self)
     
     def add_natural(self, branch, rev):
         # TODO: global cache
