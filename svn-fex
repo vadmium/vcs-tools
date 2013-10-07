@@ -14,11 +14,11 @@ The program is written to:
 * produce identical commits to "git-svn", except that it
     * optionally drops commits that are simple branch copies
 * be run incrementally
+* handle Subversion merge tracking information
 
 It does not:
 
 * handle or correlate multiple trunks, branches, or tags
-* take account of any kind of Subversion merge tracking
 * handle symbolic links, although it does handle executable files
 * do anything with special Subversion file or revision properties
 """
@@ -180,8 +180,10 @@ class Exporter:
         
         self.uuid = self.ra.get_uuid()
     
-    def export(self, git_ref, rev=INVALID_REVNUM):
-        segments = PendingSegments(self, rev)
+    def export(self, git_ref, branch=None, rev=INVALID_REVNUM):
+        if branch is None:
+            branch = self.url[len(self.repos_root) + 1:]
+        segments = PendingSegments(self, branch, rev)
         
         # Not using RemoteAccess.get_file_revs() because it does not work on
         # directories
@@ -248,7 +250,10 @@ class Exporter:
                     reporter.finish()
                     # Assume the editor calls are all completed now
                     
+                    merges = list()
                     if editor.mergeinfo:
+                        if not self.quiet:
+                            print(file=stderr)
                         ancestors = Ancestors(self)
                         if base_rev:
                             ancestors.add_natural(base_path, base_rev)
@@ -261,13 +266,21 @@ class Exporter:
                                 merged.add_segment(branch, start, end)
                                 ancestors.add_natural(branch, end)
                         if ancestors == merged:
-                            ...
+                            # TODO: minimise so that only independent branch heads are listed
+                            # i.e. do not explicitly merge C if also merging A and B, and C is an ancestor of both A and B
+                            for (branch, ranges) in mergeinfo:
+                                branch = branch.lstrip("/")
+                                for (_, end, _) in ranges:
+                                    ancestor = self.export(git_ref,
+                                        branch, end)
+                                    if ancestor is not None:
+                                        merges.append(ancestor)
                     
                     line = "commit {}\n".format(git_ref)
                     self.output.file.write(line.encode("utf-8"))
                     
-                    gitrev = self.output.newmark()
-                    line = "mark {}\n".format(gitrev)
+                    mark = self.output.newmark()
+                    line = "mark {}\n".format(mark)
                     self.output.file.write(line.encode("ascii"))
                     
                     date = time_from_cstring(date) // 10**6
@@ -288,8 +301,11 @@ class Exporter:
                     self.output.file.write(line.encode("ascii"))
                     self.output.file.writelines((log, b"\n"))
                     
-                    if init_export and base_rev:
-                        line = "from {}\n".format(segments.git_base)
+                    if (init_export or merges) and gitrev is not None:
+                        line = "from {}\n".format(gitrev)
+                        self.output.file.write(line.encode("utf-8"))
+                    for ancestor in merges:
+                        line = "merge {}\n".format(ancestor)
                         self.output.file.write(line.encode("utf-8"))
                     
                     for line in editor.edits:
@@ -300,11 +316,12 @@ class Exporter:
                     base_rev = rev
                     base_path = path[1:]
                     init_export = False
+                    gitrev = mark
         
         return gitrev
 
 class PendingSegments:
-    def __init__(self, exporter, rev):
+    def __init__(self, exporter, branch, rev):
         self.exporter = exporter
         
         # List of (base, end, path), from youngest to oldest segment.
@@ -312,7 +329,7 @@ class PendingSegments:
         self.segments = list()
         
         self.base = (0, "")  # Default if no revisions are already exported
-        get_location_segments(self.exporter, self.on_segment, rev=rev)
+        get_location_segments(self.exporter, self.on_segment, branch, rev)
     
     def on_segment(self, start, end, path):
         (kstarts, runs) = self.exporter.known_branches.get(path, ((), ()))
@@ -444,13 +461,6 @@ class Ancestors(RevisionSet):
     
     def add_natural(self, branch, rev):
         # TODO: global cache
-        root_len = len(self.exporter.repos_root)
-        prefix = (self.exporter.url + "/")[root_len + 1:]
-        if (branch + "/").startswith(prefix):
-            branch = branch[len(prefix):]
-        else:
-            self.exporter.ra.reparent(self.exporter.repos_root)
-            self.exporter.url = self.exporter.repos_root
         get_location_segments(self.exporter, self.on_segment, branch, rev)
     
     def on_segment(self, start, end, path):
@@ -469,7 +479,16 @@ class get_location_segments:
     def __init__(self, exporter, callback, path="", rev=INVALID_REVNUM):
         self.exporter = exporter
         self.callback = callback
+        
         with self.exporter.progress("location history:"):
+            root_len = len(self.exporter.repos_root)
+            prefix = (self.exporter.url + "/")[root_len + 1:]
+            if (path + "/").startswith(prefix):
+                path = path[len(prefix):]
+            else:
+                self.exporter.ra.reparent(self.exporter.repos_root)
+                self.exporter.url = self.exporter.repos_root
+            
             try:
                 self.cancelled = False
                 self.exporter.ra.get_location_segments(path, rev,
