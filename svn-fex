@@ -281,22 +281,10 @@ class PendingSegments:
         # All revisions in each segment need importing.
         self.segments = list()
         
-        with self.exporter.progress("location history:"):
-            try:
-                self.exporter.ra.get_location_segments("", rev,
-                    rev, INVALID_REVNUM, self.on_segment)
-            except StopIteration:
-                pass
-            else:
-                self.base = (0, "")  # No revisions are already exported
+        self.base = (0, "")  # Default if no revisions are already exported
+        get_location_segments(self.exporter, self.on_segment, rev=rev)
     
     def on_segment(self, start, end, path):
-        if path is None:
-            return
-        if not self.exporter.quiet:
-            stderr.write("\n  /{}:{}-{}".format(path, start, end))
-            stderr.flush()
-        
         (kstarts, runs) = self.exporter.known_branches.get(path, ((), ()))
         i = bisect_right(kstarts, end)
         # Only kstarts[:i] are all <= end. If it exists, kstart[i] > end.
@@ -386,6 +374,25 @@ class ExportRevs:
         self.date = props[PROP_REVISION_DATE]
         self.author = props.get(PROP_REVISION_AUTHOR, "(no author)")
         self.log = props[PROP_REVISION_LOG]
+
+class get_location_segments:
+    def __init__(self, exporter, callback, path="", rev=INVALID_REVNUM):
+        self.exporter = exporter
+        self.callback = callback
+        with self.exporter.progress("location history:"):
+            try:
+                self.exporter.ra.get_location_segments(path, rev,
+                    rev, INVALID_REVNUM, self.on_segment)
+            except StopIteration:
+                pass
+    
+    def on_segment(self, start, end, path):
+        if path is None:
+            return
+        if not self.exporter.quiet:
+            stderr.write("\n  /{}:{}-{}".format(path, start, end))
+            stderr.flush()
+        self.callback(start, end, path)
 
 class FastExport(Context):
     def __init__(self, *pos, **kw):
