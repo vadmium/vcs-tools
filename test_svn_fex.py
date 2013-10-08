@@ -89,6 +89,7 @@ class RepoTests(BaseTest):
         with open(output, "r", encoding="ascii") as output:
             self.assertMultiLineEqual("""\
 commit refs/ref
+mark :1
 committer (no author) <(no author)@00000000-0000-0000-0000-000000000000> 0 +0000
 data 60
 
@@ -97,6 +98,7 @@ git-svn-id: /trunk@1 00000000-0000-0000-0000-000000000000
 
 
 commit refs/ref
+mark :2
 committer (no author) <(no author)@00000000-0000-0000-0000-000000000000> 0 +0000
 data 60
 
@@ -148,6 +150,7 @@ git-svn-id: /trunk@2 00000000-0000-0000-0000-000000000000
         with open(output, "r", encoding="ascii") as output:
             self.assertMultiLineEqual("""\
 commit refs/ref
+mark :1
 committer (no author) <(no author)@00000000-0000-0000-0000-000000000000> 0 +0000
 data 54
 
@@ -204,6 +207,7 @@ mark :2
 data 0
 
 commit refs/ref
+mark :3
 committer (no author) <(no author)@00000000-0000-0000-0000-000000000000> 0 +0000
 data 66
 
@@ -224,6 +228,7 @@ data 8
 content
 
 commit refs/ref
+mark :4
 committer (no author) <(no author)@00000000-0000-0000-0000-000000000000> 0 +0000
 data 66
 
@@ -262,6 +267,7 @@ mark :1
 data 0
 
 commit refs/branch
+mark :2
 committer (no author) <(no author)@00000000-0000-0000-0000-000000000000> 0 +0000
 data 60
 
@@ -271,6 +277,7 @@ git-svn-id: /trunk@1 00000000-0000-0000-0000-000000000000
 M 644 :1 file
 
 commit refs/branch
+mark :3
 committer (no author) <(no author)@00000000-0000-0000-0000-000000000000> 0 +0000
 data 61
 
@@ -284,6 +291,7 @@ data 4
 mod
 
 commit refs/branch
+mark :4
 committer (no author) <(no author)@00000000-0000-0000-0000-000000000000> 0 +0000
 data 61
 

@@ -191,6 +191,11 @@ class Exporter:
         # remembering all versions of files received.
         
         (base_rev, base_path) = segments.base
+        if base_rev:
+            gitrev = segments.git_base
+        else:
+            gitrev = None
+        
         init_export = True
         for (base, end, path) in segments:
             path = "/" + path
@@ -261,6 +266,10 @@ class Exporter:
                     line = "commit {}\n".format(git_ref)
                     self.output.file.write(line.encode("utf-8"))
                     
+                    gitrev = self.output.newmark()
+                    line = "mark {}\n".format(gitrev)
+                    self.output.file.write(line.encode("ascii"))
+                    
                     date = time_from_cstring(date) // 10**6
                     
                     if self.author_map is None:
@@ -291,6 +300,8 @@ class Exporter:
                     base_rev = rev
                     base_path = path[1:]
                     init_export = False
+        
+        return gitrev
 
 class PendingSegments:
     def __init__(self, exporter, rev):
@@ -483,6 +494,7 @@ class get_location_segments:
 class FastExport(Context):
     def __init__(self, *pos, **kw):
         try:
+            self.nextmark = 1
             self.files = dict()
             self.open(*pos, **kw)
         except:
@@ -490,6 +502,11 @@ class FastExport(Context):
             raise
     def open(self):
         pass
+    
+    def newmark(self):
+        mark = ":{}".format(self.nextmark)
+        self.nextmark += 1
+        return mark
     
     def blob(self, path, buf):
         blob = self.blob_header(path, buf)
@@ -499,7 +516,7 @@ class FastExport(Context):
     def blob_header(self, path, buf):
         (mark, _) = self.files.get(path, (None, None))
         if mark is None:
-            mark = ":{}".format(1 + len(self.files))
+            mark = self.newmark()
             self.files[path] = (mark,)
         
         self.file.write(b"blob\n")
