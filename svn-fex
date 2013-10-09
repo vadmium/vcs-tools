@@ -173,7 +173,8 @@ class Repo(object):
                             stderr.flush()
                         next = self.rev + 1
                         self.rev = None
-                        ra.get_log(self.on_revision, paths=None,
+                        ra.get_log(self.on_revision,
+                            strict_node_history=False, paths=None,
                             start=next, end=end, limit=1,
                             # TODO: Changed paths only needed for the first
                             # revision in each segment
