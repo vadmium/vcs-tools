@@ -65,6 +65,8 @@ def main():
         metavar="URL", help="subversion URL to store in the metadata")
     parser.add_argument("--ignore", action="append", default=list(),
         metavar="PATH", help="add a path to be excluded from export")
+    parser.add_argument("--export-copies", action="store_true",
+        help="export simple branch copies even when no files were modified")
     parser.add_argument("-q", "--quiet", action="store_true",
         help="suppress progress messages")
     
@@ -94,6 +96,7 @@ def main():
             author_map=author_map,
             root=args.rewrite_root,
             ignore=args.ignore,
+            export_copies=args.export_copies,
             quiet=args.quiet,
         )
     except SubversionException as err:
@@ -106,6 +109,7 @@ class Repo(object):
         author_map=None,
         root=None,
         ignore=(),
+        export_copies=False,
         quiet=False,
     ):
         self.quiet = quiet
@@ -182,11 +186,10 @@ class Repo(object):
                             stderr.write(format(self.rev))
                             stderr.flush()
                         
-                        # Do not generate a Git commit from a simple
-                        # unmodified branch copy
                         prefix = path.rstrip("/") + "/"
-                        if not any(path.startswith(prefix) and path != prefix
-                        for path in self.paths.keys()):
+                        if (not export_copies and
+                        not any(path.startswith(prefix) and
+                        path != prefix for path in self.paths.keys())):
                             default = (None, None, None)
                             (_, src, _) = self.paths.get(path, default)
                             if src is not None:

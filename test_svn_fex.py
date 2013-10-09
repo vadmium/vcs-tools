@@ -55,10 +55,13 @@ class Test(TestCase):
             
             for node in rev.get("nodes", {}):
                 headers = list()
-                for name in ("action", "kind", "path"):
-                    value = node.get(name)
+                for name in (
+                    "action", "kind", "path",
+                    "copyfrom-path", "copyfrom-rev",
+                ):
+                    value = node.get(name.replace("-", "_"))
                     if value is not None:
-                        headers.append(("Node-" + name, value))
+                        headers.append(("Node-" + name, format(value)))
                 dump_message(proc.stdin, headers,
                     props=node.get("props"), content=node.get("content"))
         
@@ -214,6 +217,63 @@ git-svn-id: file:///repo@2 00000000-0000-0000-0000-000000000000
 
 M 755 :1 file1
 M 755 :2 file2
+
+""",
+                export.read())
+    
+    def test_export_copies(self):
+        """Test the "--export-copies" mode"""
+        repo = self.make_repo((
+            dict(nodes=(
+                dict(action="add", path="trunk", kind="dir"),
+                dict(action="add", path="trunk/file", kind="file",
+                    content=b""),
+            )),
+            dict(nodes=(dict(action="add", path="branch",
+                copyfrom_path="trunk", copyfrom_rev=1),)),
+            dict(nodes=(dict(action="change", path="branch/file",
+                content=b"mod\n"),)),
+        ))
+        url = "file://{}/branch".format(pathname2url(repo))
+        export = os.path.join(self.dir, "export")
+        self.svn_fex["Repo"](url, "branch", file=export, root="",
+            export_copies=True, quiet=True)
+        with open(export, "r", encoding="ascii") as export:
+            self.assertMultiLineEqual("""\
+blob
+mark :1
+data 0
+
+commit refs/branch
+committer (no author) <(no author)@00000000-0000-0000-0000-000000000000> 0 +0000
+data 60
+
+
+git-svn-id: /trunk@1 00000000-0000-0000-0000-000000000000
+
+M 644 :1 file
+
+commit refs/branch
+committer (no author) <(no author)@00000000-0000-0000-0000-000000000000> 0 +0000
+data 61
+
+
+git-svn-id: /branch@2 00000000-0000-0000-0000-000000000000
+
+
+blob
+mark :1
+data 4
+mod
+
+commit refs/branch
+committer (no author) <(no author)@00000000-0000-0000-0000-000000000000> 0 +0000
+data 61
+
+
+git-svn-id: /branch@3 00000000-0000-0000-0000-000000000000
+
+M 644 :1 file
 
 """,
                 export.read())
