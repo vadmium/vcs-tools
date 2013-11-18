@@ -1,8 +1,7 @@
 #! /usr/bin/env python3
 
 from unittest import TestCase
-from tempfile import mkdtemp
-from shutil import rmtree
+from tempfile import TemporaryDirectory
 import subprocess
 import os.path
 from urllib.request import pathname2url
@@ -23,15 +22,15 @@ from functools import partial
 class Test(TestCase):
     def setUp(self):
         TestCase.setUp(self)
+        
         path = os.path.join(os.path.dirname(__file__), "svn-fex")
         with open(path, "rb") as file:
             self.svn_fex = imp.load_module("svn-fex", file, path,
                 ("", "rb", imp.PY_SOURCE))
-        self.dir = mkdtemp(prefix="svn-fex-")
-    
-    def tearDown(self):
-        rmtree(self.dir)
-        TestCase.tearDown(self)
+        
+        tempdir = TemporaryDirectory(prefix="svn-fex-")
+        self.addCleanup(tempdir.cleanup)
+        self.dir = tempdir.name
     
     def make_repo(self, revs):
         repo = os.path.join(self.dir, "repo")
