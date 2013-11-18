@@ -6,7 +6,7 @@ from shutil import rmtree
 import subprocess
 import os.path
 from urllib.request import pathname2url
-import runpy
+import imp
 from subprocess import Popen
 from subvertpy.properties import (
     PROP_REVISION_DATE,
@@ -23,12 +23,10 @@ from functools import partial
 class Test(TestCase):
     def setUp(self):
         TestCase.setUp(self)
-        self.svn_fex = runpy.run_path("svn-fex")
-        
-        # Massive hack to restore the module's global variables, which are
-        # probably all nulled out by garbage collection
-        self.svn_fex["main"].__globals__.update(self.svn_fex)
-        
+        path = os.path.join(os.path.dirname(__file__), "svn-fex")
+        with open(path, "rb") as file:
+            self.svn_fex = imp.load_module("svn-fex", file, path,
+                ("", "rb", imp.PY_SOURCE))
         self.dir = mkdtemp(prefix="svn-fex-")
     
     def tearDown(self):
@@ -80,7 +78,7 @@ class Test(TestCase):
         ))
         url = "file://{}/trunk".format(pathname2url(repo))
         export = os.path.join(self.dir, "export")
-        self.svn_fex["Repo"](url, "ref", file=export, root="", quiet=True)
+        self.svn_fex.Repo(url, "ref", file=export, root="", quiet=True)
         with open(export, "r", encoding="ascii") as export:
             self.assertMultiLineEqual("""\
 commit refs/ref
@@ -112,7 +110,7 @@ git-svn-id: /trunk@2 00000000-0000-0000-0000-000000000000
         url = "file://{}".format(pathname2url(repo))
         export = os.path.join(self.dir, "export")
         authors = {"user": "user <user>"}
-        self.svn_fex["Repo"](url, "ref", file=export, author_map=authors,
+        self.svn_fex.Repo(url, "ref", file=export, author_map=authors,
             quiet=True)
     
     def test_first_delete(self):
@@ -133,7 +131,7 @@ git-svn-id: /trunk@2 00000000-0000-0000-0000-000000000000
         ))
         url = "file://{}".format(pathname2url(repo))
         export = os.path.join(self.dir, "export")
-        self.svn_fex["Repo"](url, "ref", file=export, root="", base_rev=1,
+        self.svn_fex.Repo(url, "ref", file=export, root="", base_rev=1,
             ignore=("igfile", "igdir"), quiet=True)
         with open(export, "r", encoding="ascii") as export:
             self.assertMultiLineEqual("""\
@@ -167,7 +165,7 @@ D file
         subprocess.check_call(("git", "init", "--quiet", "--", git))
         script = 'cd "$1" && git fast-import --quiet'
         importer = ("sh", "-c", script, "--", git)
-        self.svn_fex["Repo"](url, "heads/master", importer=importer, root="",
+        self.svn_fex.Repo(url, "heads/master", importer=importer, root="",
             quiet=True)
         cmd = ("git", "rev-parse", "--verify", "refs/heads/master")
         rev = subprocess.check_output(cmd, cwd=git).decode("ascii").strip()
@@ -175,9 +173,9 @@ D file
     
     def test_executable(self):
         """Order of setting file mode and contents should not matter"""
-        self.svn_fex["main"].__globals__["RemoteAccess"] = ExecutableRa
+        self.svn_fex.RemoteAccess = ExecutableRa
         export = os.path.join(self.dir, "export")
-        self.svn_fex["Repo"]("file:///repo", "ref", file=export, quiet=True)
+        self.svn_fex.Repo("file:///repo", "ref", file=export, quiet=True)
         with open(export, "r", encoding="ascii") as export:
             self.assertMultiLineEqual("""\
 blob
@@ -236,7 +234,7 @@ M 755 :2 file2
         ))
         url = "file://{}/branch".format(pathname2url(repo))
         export = os.path.join(self.dir, "export")
-        self.svn_fex["Repo"](url, "branch", file=export, root="",
+        self.svn_fex.Repo(url, "branch", file=export, root="",
             export_copies=True, quiet=True)
         with open(export, "r", encoding="ascii") as export:
             self.assertMultiLineEqual("""\
