@@ -23,7 +23,7 @@ It does not:
 * do anything with special Subversion file or revision properties
 """
 
-from subvertpy.ra import RemoteAccess, Auth, get_username_provider
+from subvertpy.ra import RemoteAccess
 from subvertpy.delta import apply_txdelta_window
 from subvertpy.properties import (
     PROP_REVISION_DATE,
@@ -164,9 +164,16 @@ class Exporter:
         else:
             self.progress = progresscontext
         
-        # Auth stuff avoids the following error for diffs on local (file:)
-        # URLs: "No provider registered for 'svn.username' credentials"
-        auth = Auth((get_username_provider(),))
+        auth = subvertpy.ra.Auth((
+            # Avoids the following error for diffs on local (file:) URLs:
+            # "No provider registered for 'svn.username' credentials"
+            subvertpy.ra.get_username_provider(),
+            
+            # Avoids RemoteAccess() failing for HTTPS URLs with
+            # "Unable to connect to a repository at URL"
+            # and error code 215001 ("No authentication provider available")
+            subvertpy.ra.get_ssl_server_trust_file_provider(),
+        ))
         
         with self.progress("connecting to ", url):
             self.ra = RemoteAccess(url, auth=auth)
