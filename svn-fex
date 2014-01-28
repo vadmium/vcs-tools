@@ -81,12 +81,16 @@ def main():
     
     args = parser.parse_args()
     
-    (url, _, peg_rev) = args.url.rpartition("@")
-    if url:
-        peg_rev = int(peg_rev)
+    url = args.url.rsplit("@", 1)
+    if len(url) > 1:
+        peg_rev = url.pop()
+        if peg_rev:
+            peg_rev = int(peg_rev)
+        else:
+            peg_rev = INVALID_REVNUM
     else:
-        url = peg_rev
         peg_rev = INVALID_REVNUM
+    (url,) = url
     
     rev_map = defaultdict(dict)
     for s in args.rev_map:
