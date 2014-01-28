@@ -81,7 +81,7 @@ def main():
     
     if args.authors_file is not None:
         author_map = dict()
-        with open(authors, "rt") as file:
+        with open(args.authors_file, "rt") as file:
             for line in file:
                 if line.endswith("\n"):
                     line = line[:-1]
