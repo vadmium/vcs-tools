@@ -19,8 +19,10 @@ from io import BytesIO
 from email.generator import BytesGenerator
 import subvertpy.delta
 from functools import partial
+from shorthand import substattr
+import sys
 
-class Test(TestCase):
+class BaseTest(TestCase):
     def setUp(self):
         TestCase.setUp(self)
         self.svn_fex = runpy.run_path("svn-fex")
@@ -34,7 +36,8 @@ class Test(TestCase):
     def tearDown(self):
         rmtree(self.dir)
         TestCase.tearDown(self)
-    
+
+class Test(BaseTest):
     def make_repo(self, revs):
         repo = os.path.join(self.dir, "repo")
         subprocess.check_call(("svnadmin", "create", repo))
@@ -365,6 +368,31 @@ class ExecutableReporter:
         self.finish = diff
     def set_path(self, *pos):
         pass
+
+class TestAuthorsFile(BaseTest):
+    """Parsing authors file"""
+    def runTest(self):
+        authors = os.path.join(self.dir, "authors")
+        with open(authors, "w") as file:
+            file.write(
+                "user = Some Body <whoever@where.ever>\n"
+                "tricky = E = mc squared\n"
+            )
+        
+        output = os.path.join(self.dir, "output")
+        argv = ["svn-fex", "--git-ref", "refs/ref", "--authors", authors,
+            "--file", output, "file:///dummy"]
+        with substattr(sys, "argv", argv):
+            self.svn_fex["main"].__globals__["Repo"] = self.Repo
+            self.svn_fex["main"]()
+        
+        self.assertEqual(dict(
+            user="Some Body <whoever@where.ever>",
+            tricky="E = mc squared",
+        ), self.author_map)
+    
+    def Repo(self, *pos, author_map, **kw):
+        self.author_map = author_map
 
 def dump_message(file, headers, props=None, content=None):
     msg = Message()
