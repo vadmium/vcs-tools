@@ -143,7 +143,10 @@ class Repo(object):
                 # HEAD would be interpreted as the entire history.
                 return
             
+            # List of (base, end, path), from youngest to oldest segment.
+            # All revisions in each segment need importing.
             self.locations = list()
+            
             with progress("location history:"):
                 ra.get_location_segments("", end_rev, end_rev, base_rev + 1,
                     self.on_location)
