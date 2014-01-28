@@ -65,9 +65,10 @@ def main():
     
     parser.add_argument("--git-ref", required=True, metavar="REFNAME",
         help="Git ref name to export to (e.g. refs/remotes/svn/trunk)")
-    parser.add_argument("--rev-map", action="append", default=list(),
-        metavar="BRANCH@SVN-REV:GIT-REV", help="""add a mapping from a
-        Subversion path and revision to an existing Git revision""")
+    parser.add_argument("--rev-map", metavar="FILENAME",
+        help="""file mapping from Subversion paths and revisions
+        to existing Git revisions,
+        each line formatted as PATH@SVN-REV (space) GIT-REV""")
     parser.add_argument("-A", "--authors-file", metavar="FILENAME", help=
         'file mapping Subversion user names to Git authors, like "git-svn"')
     parser.add_argument("--rewrite-root",
@@ -93,11 +94,13 @@ def main():
     (url,) = url
     
     rev_map = defaultdict(dict)
-    for s in args.rev_map:
-        (s, gitrev) = s.rsplit(":", 1)
-        (branch, svnrev) = s.rsplit("@", 1)
-        svnrev = int(svnrev)
-        rev_map[branch][svnrev] = gitrev
+    if args.rev_map is not None:
+        with open(args.rev_map, "rt") as file:
+            for s in file:
+                (s, gitrev) = s.rstrip("\n").rsplit(" ", 1)
+                (branch, svnrev) = s.rsplit("@", 1)
+                svnrev = int(svnrev)
+                rev_map[branch][svnrev] = gitrev
     
     if args.authors_file is not None:
         author_map = dict()
@@ -145,6 +148,7 @@ class Exporter:
         
         self.known_branches = dict()
         for (branch, revs) in rev_map.items():
+            branch = branch.lstrip("/")
             starts = list()
             runs = list()
             self.known_branches[branch] = (starts, runs)
