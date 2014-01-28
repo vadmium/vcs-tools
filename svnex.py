@@ -400,6 +400,11 @@ class PendingSegments:
     
     def __iter__(self):
         return reversed(self.segments)
+    
+    def __repr__(self):
+        segs = ("{}:{}->{}".format(path, base, end) for
+            (base, end, path) in self)
+        return "<{} {}>".format(type(self).__name__, ", ".join(segs))
 
 def iter_revs(*pos, **kw):
     return closing(iter(ExportRevs(*pos, **kw)))
