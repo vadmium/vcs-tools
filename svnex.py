@@ -126,8 +126,8 @@ def main():
             )
             exporter.export(args.git_ref, rev=peg_rev)
         except SubversionException as err:
-            (msg, _) = err.args
-            raise SystemExit(msg)
+            (msg, num) = err.args
+            raise SystemExit("E{}: {}".format(num, msg))
 
 class Exporter:
     def __init__(self, url, output,
