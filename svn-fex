@@ -419,18 +419,25 @@ class get_location_segments:
         self.callback = callback
         with self.exporter.progress("location history:"):
             try:
+                self.cancelled = False
                 self.exporter.ra.get_location_segments(path, rev,
                     rev, INVALID_REVNUM, self.on_segment)
             except StopIteration:
                 pass
     
     def on_segment(self, start, end, path):
-        if path is None:
+        if self.cancelled or path is None:
             return
         if not self.exporter.quiet:
             stderr.write("\n  /{}:{}-{}".format(path, start, end))
             stderr.flush()
-        self.callback(start, end, path)
+        try:
+            self.callback(start, end, path)
+        except StopIteration:
+            # Do not actually cancel the Subversion operation,
+            # because its Serf implementation does not handle cancellation
+            # very well
+            self.cancelled = True
 
 class FastExport(Context):
     def __init__(self, *pos, **kw):
