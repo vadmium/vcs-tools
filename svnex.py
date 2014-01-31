@@ -194,6 +194,7 @@ class Exporter:
     def export(self, git_ref, branch=None, rev=INVALID_REVNUM):
         if branch is None:
             branch = self.url[len(self.repos_root) + 1:]
+        self.git_ref = git_ref
         segments = PendingSegments(self, branch, rev)
         
         # Not using RemoteAccess.get_file_revs() because it does not work on
@@ -215,121 +216,127 @@ class Exporter:
             prefix = path.rstrip("/") + "/"
             url = (self.repos_root + path).rstrip("/")
             with iter_revs(self, path, base, end) as revs:
-                for (rev, date, author, log, paths) in revs:
-                    if not init_export and base_path != path[1:]:
-                        # Base revision is at a different branch location.
-                        # Will have to diff the base location against the
-                        # current location. Have to switch root because the
-                        # diff reporter does not accept link_path() on the
-                        # top-level directory.
-                        self.url = self.repos_root + "/" + base_path
-                        self.url = self.url.rstrip("/")
-                        self.ra.reparent(self.url)
-                    
-                    if not self.quiet:
-                        stderr.write(":")
-                        stderr.flush()
-                    editor = RevEditor(self.output, self.quiet)
-                    
-                    # Diff editor does not convey deletions when starting
-                    # from scratch
-                    if init_export:
-                        dir = DirEditor(editor)
-                        for (file, (action, _, _)) in paths.items():
-                            if (not file.startswith(prefix) or
-                            action not in "DR"):
-                                continue
-                            file = file[len(prefix):]
-                            for p in self.ignore:
-                                if (file == p or
-                                file.startswith((p + "/").lstrip("/"))):
-                                    break
-                            else:
-                                dir.delete_entry(file)
-                    
-                    reporter = self.ra.do_diff(rev, "", url, editor,
-                        True, True, True)
-                    if init_export:
-                        reporter.set_path("", rev, True)
-                    else:
-                        reporter.set_path("", base_rev, False)
-                    
-                    for p in self.ignore:
-                        reporter.set_path(p, INVALID_REVNUM, True, None,
-                            subvertpy.ra.DEPTH_EXCLUDE)
-                    
-                    reporter.finish()
-                    # Assume the editor calls are all completed now
-                    
-                    merges = list()
-                    if editor.mergeinfo:
-                        if not self.quiet:
-                            print(file=stderr)
-                        ancestors = Ancestors(self)
-                        if base_rev:
-                            ancestors.add_natural(base_path, base_rev)
-                        merged = RevisionSet()
-                        merged.update(ancestors)
-                        mergeinfo = editor.mergeinfo.items()
-                        for (branch, ranges) in mergeinfo:
-                            branch = branch.lstrip("/")
-                            for (start, end, _) in ranges:
-                                merged.add_segment(branch, start, end)
-                                ancestors.add_natural(branch, end)
-                        if ancestors == merged:
-                            # TODO: minimise so that only independent branch heads are listed
-                            # i.e. do not explicitly merge C if also merging A and B, and C is an ancestor of both A and B
-                            for (branch, ranges) in mergeinfo:
-                                branch = branch.lstrip("/")
-                                for (_, end, _) in ranges:
-                                    ancestor = self.export(git_ref,
-                                        branch, end)
-                                    if ancestor is not None:
-                                        merges.append(ancestor)
-                    
-                    line = "commit {}\n".format(git_ref)
-                    self.output.file.write(line.encode("utf-8"))
-                    
-                    mark = self.output.newmark()
-                    line = "mark {}\n".format(mark)
-                    self.output.file.write(line.encode("ascii"))
-                    
-                    date = time_from_cstring(date) // 10**6
-                    
-                    if self.author_map is None:
-                        author = "{author} <{author}@{uuid}>".format(
-                            author=author, uuid=self.uuid)
-                    else:
-                        author = self.author_map[author]
-                    
-                    line = "committer {} {} +0000\n".format(author, date)
-                    self.output.file.write(line.encode("utf-8"))
-                    
-                    log = "{}\n\ngit-svn-id: {}{}@{} {}\n".format(
-                        log, self.root, path.rstrip("/"), rev, self.uuid)
-                    log = log.encode("utf-8")
-                    line = "data {}\n".format(len(log))
-                    self.output.file.write(line.encode("ascii"))
-                    self.output.file.writelines((log, b"\n"))
-                    
-                    if (init_export or merges) and gitrev is not None:
-                        line = "from {}\n".format(gitrev)
-                        self.output.file.write(line.encode("utf-8"))
-                    for ancestor in merges:
-                        line = "merge {}\n".format(ancestor)
-                        self.output.file.write(line.encode("utf-8"))
-                    
-                    for line in editor.edits:
-                        line = line.encode("utf-8")
-                        self.output.file.writelines((line, b"\n"))
-                    self.output.file.write(b"\n")
+                for (rev, date, author, log, self.paths) in revs:
+                    gitrev = self.commit(rev, date, author, log,
+                        init_export=init_export,
+                        base_rev=base_rev, base_path=base_path,
+                        gitrev=gitrev,
+                        path=path, prefix=prefix, url=url,
+                    )
                     
                     base_rev = rev
                     base_path = path[1:]
                     init_export = False
-                    gitrev = mark
         
         return gitrev
+    
+    def commit(self, rev, date, author, log, *,
+    init_export, base_rev, base_path, gitrev, path, prefix, url):
+        if not init_export and base_path != path[1:]:
+            # Base revision is at a different branch location.
+            # Will have to diff the base location against the
+            # current location. Have to switch root because the
+            # diff reporter does not accept link_path() on the
+            # top-level directory.
+            self.url = self.repos_root + "/" + base_path
+            self.url = self.url.rstrip("/")
+            self.ra.reparent(self.url)
+        
+        if not self.quiet:
+            stderr.write(":")
+            stderr.flush()
+        editor = RevEditor(self.output, self.quiet)
+        
+        # Diff editor does not convey deletions when starting
+        # from scratch
+        if init_export:
+            dir = DirEditor(editor)
+            for (file, (action, _, _)) in self.paths.items():
+                if not file.startswith(prefix) or action not in "DR":
+                    continue
+                file = file[len(prefix):]
+                for p in self.ignore:
+                    if file == p or file.startswith((p + "/").lstrip("/")):
+                        break
+                else:
+                    dir.delete_entry(file)
+        
+        reporter = self.ra.do_diff(rev, "", url, editor, True, True, True)
+        if init_export:
+            reporter.set_path("", rev, True)
+        else:
+            reporter.set_path("", base_rev, False)
+        
+        for p in self.ignore:
+            reporter.set_path(p, INVALID_REVNUM, True, None,
+                subvertpy.ra.DEPTH_EXCLUDE)
+        
+        reporter.finish()
+        # Assume the editor calls are all completed now
+        
+        merges = list()
+        if editor.mergeinfo:
+            if not self.quiet:
+                print(file=stderr)
+            ancestors = Ancestors(self)
+            if base_rev:
+                ancestors.add_natural(base_path, base_rev)
+            merged = RevisionSet()
+            merged.update(ancestors)
+            mergeinfo = editor.mergeinfo.items()
+            for (branch, ranges) in mergeinfo:
+                branch = branch.lstrip("/")
+                for (start, end, _) in ranges:
+                    merged.add_segment(branch, start, end)
+                    ancestors.add_natural(branch, end)
+            if ancestors == merged:
+                # TODO: minimise so that only independent branch heads are listed
+                # i.e. do not explicitly merge C if also merging A and B, and C is an ancestor of both A and B
+                for (branch, ranges) in mergeinfo:
+                    branch = branch.lstrip("/")
+                    for (_, end, _) in ranges:
+                        ancestor = self.export(self.git_ref, branch, end)
+                        if ancestor is not None:
+                            merges.append(ancestor)
+        
+        line = "commit {}\n".format(self.git_ref)
+        self.output.file.write(line.encode("utf-8"))
+        
+        mark = self.output.newmark()
+        line = "mark {}\n".format(mark)
+        self.output.file.write(line.encode("ascii"))
+        
+        date = time_from_cstring(date) // 10**6
+        
+        if self.author_map is None:
+            author = "{author} <{author}@{uuid}>".format(
+                author=author, uuid=self.uuid)
+        else:
+            author = self.author_map[author]
+        
+        line = "committer {} {} +0000\n".format(author, date)
+        self.output.file.write(line.encode("utf-8"))
+        
+        log = "{}\n\ngit-svn-id: {}{}@{} {}\n".format(
+            log, self.root, path.rstrip("/"), rev, self.uuid)
+        log = log.encode("utf-8")
+        line = "data {}\n".format(len(log))
+        self.output.file.write(line.encode("ascii"))
+        self.output.file.writelines((log, b"\n"))
+        
+        if (init_export or merges) and gitrev is not None:
+            line = "from {}\n".format(gitrev)
+            self.output.file.write(line.encode("utf-8"))
+        for ancestor in merges:
+            line = "merge {}\n".format(ancestor)
+            self.output.file.write(line.encode("utf-8"))
+        
+        for line in editor.edits:
+            line = line.encode("utf-8")
+            self.output.file.writelines((line, b"\n"))
+        self.output.file.write(b"\n")
+        
+        return mark
 
 class PendingSegments:
     def __init__(self, exporter, branch, rev):
