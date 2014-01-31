@@ -299,12 +299,10 @@ class Exporter:
                         if ancestor is not None:
                             merges.append(ancestor)
         
-        line = "commit {}\n".format(self.git_ref)
-        self.output.file.write(line.encode("utf-8"))
+        self.output.printf("commit {}", self.git_ref)
         
         mark = self.output.newmark()
-        line = "mark {}\n".format(mark)
-        self.output.file.write(line.encode("ascii"))
+        self.output.printf("mark {}", mark)
         
         date = time_from_cstring(date) // 10**6
         
@@ -314,27 +312,23 @@ class Exporter:
         else:
             author = self.author_map[author]
         
-        line = "committer {} {} +0000\n".format(author, date)
-        self.output.file.write(line.encode("utf-8"))
+        self.output.printf("committer {} {} +0000", author, date)
         
         log = "{}\n\ngit-svn-id: {}{}@{} {}\n".format(
             log, self.root, path.rstrip("/"), rev, self.uuid)
         log = log.encode("utf-8")
-        line = "data {}\n".format(len(log))
-        self.output.file.write(line.encode("ascii"))
-        self.output.file.writelines((log, b"\n"))
+        self.output.printf("data {}", len(log))
+        self.output.file.write(log)
+        self.output.printf("")
         
         if (init_export or merges) and gitrev is not None:
-            line = "from {}\n".format(gitrev)
-            self.output.file.write(line.encode("utf-8"))
+            self.output.printf("from {}", gitrev)
         for ancestor in merges:
-            line = "merge {}\n".format(ancestor)
-            self.output.file.write(line.encode("utf-8"))
+            self.output.printf("merge {}", ancestor)
         
         for line in editor.edits:
-            line = line.encode("utf-8")
-            self.output.file.writelines((line, b"\n"))
-        self.output.file.write(b"\n")
+            self.output.printf("{}", line)
+        self.output.printf("")
         
         return mark
 
@@ -545,9 +539,14 @@ class FastExport(Context):
         self.nextmark += 1
         return mark
     
+    def printf(self, format, *pos, **kw):
+        line = format.format(*pos, **kw).encode("utf-8")
+        self.file.writelines((line, b"\n"))
+    
     def blob(self, path, buf):
         blob = self.blob_header(path, buf)
-        self.file.writelines((buf, b"\n"))
+        self.file.write(buf)
+        self.printf("")
         return blob
     
     def blob_header(self, path, buf):
@@ -556,9 +555,9 @@ class FastExport(Context):
             mark = self.newmark()
             self.files[path] = (mark,)
         
-        self.file.write(b"blob\n")
-        self.file.write("mark {}\n".format(mark).encode("ascii"))
-        self.file.write("data {}\n".format(len(buf)).encode("ascii"))
+        self.printf("blob")
+        self.printf("mark {}", mark)
+        self.printf("data {}", len(buf))
         return mark
     
     def __setitem__(self, path, value):
@@ -579,7 +578,8 @@ class FastExportFile(FastExport):
         blob = self.blob_header(path, buf)
         filedata = FileArray(self.file, self.file.tell(), len(buf))
         self.filedata[blob] = filedata
-        self.file.writelines((buf, b"\n"))
+        self.file.write(buf)
+        self.printf("")
         return blob
     
     def cat_blob(self, blob):
@@ -592,13 +592,13 @@ class FastExportPipe(FastExport):
         FastExport.__init__(self)
     def open(self):
         self.file = self.proc.stdin
-        self.file.write(b"feature done\n")
-        self.file.write(b"feature cat-blob\n")
+        self.printf("feature done")
+        self.printf("feature cat-blob")
     
     def __exit__(self, type, value, traceback):
         try:
             if not value:
-                self.file.write(b"done\n")
+                self.printf("done")
         except BaseException as err:
             value = err
         finally:
@@ -622,7 +622,7 @@ class FastExportPipe(FastExport):
                 raise SystemExit(returncode)
     
     def cat_blob(self, blob):
-        self.file.write("cat-blob {}\n".format(blob).encode("ascii"))
+        self.printf("cat-blob {}", blob)
         self.file.flush()
         size = int(self.proc.stdout.readline().split(b" ", 3)[2])
         data = self.proc.stdout.read(size)
