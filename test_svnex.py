@@ -292,6 +292,34 @@ M 644 :1 file
 
 """,
                 output.read())
+    
+    def test_branch_no_commit(self):
+        """Test branching when no commits are involved"""
+        repo = self.make_repo((
+            dict(nodes=(
+                dict(action="add", path="trunk", kind="dir"),
+                dict(action="add", path="branches", kind="dir"),
+                dict(action="add", path="trunk/file", kind="file",
+                    content=b""),
+            )),
+            dict(nodes=(
+                dict(action="add", path="branches/branch",
+                    copyfrom_path="trunk", copyfrom_rev=1),
+            )),
+        ))
+        url = "file://{}/branches/branch".format(pathname2url(repo))
+        output = os.path.join(self.dir, "output")
+        with svnex.FastExportFile(output) as fex:
+            rev_map = {"trunk": {1: "trunk"}}
+            exporter = svnex.Exporter(url, fex, root="", rev_map=rev_map,
+                quiet=True)
+            exporter.export("refs/heads/branch")
+        with open(output, "r", encoding="ascii") as output:
+            self.assertMultiLineEqual("""\
+reset refs/heads/branch
+from trunk
+""",
+                output.read())
 
 def executable_add(editor):
     root = editor.open_root(0)
