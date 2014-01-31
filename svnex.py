@@ -217,16 +217,37 @@ class Exporter:
             url = (self.repos_root + path).rstrip("/")
             with iter_revs(self, path, base, end) as revs:
                 for (rev, date, author, log, self.paths) in revs:
-                    gitrev = self.commit(rev, date, author, log,
-                        init_export=init_export,
-                        base_rev=base_rev, base_path=base_path,
-                        gitrev=gitrev,
-                        path=path, prefix=prefix, url=url,
-                    )
+                    commit = self.export_copies
+                    
+                    # Assuming we are only interested in "trunk":
+                    # A /proj2/trunk from /proj1/trunk -> no commit
+                    # A /proj2 from /proj1 -> no commit
+                    # A /trunk without copy -> commit
+                    # A /proj/trunk from /proj/branch -> no commit
+                    commit = commit or any(path.startswith(prefix) and
+                        path > prefix for path in self.paths.keys())
+                    if not commit:
+                        default = (None, None, None)
+                        (_, src, _) = self.paths.get(path, default)
+                        commit = src is None
+                    
+                    if commit:
+                        gitrev = self.commit(rev, date, author, log,
+                            init_export=init_export,
+                            base_rev=base_rev, base_path=base_path,
+                            gitrev=gitrev,
+                            path=path, prefix=prefix, url=url,
+                        )
+                        init_export = False
+                    else:
+                        if not self.quiet:
+                            stderr.write(": no changes")
+                            stderr.flush()
+                        self.output.printf("reset {}", git_ref)
+                        self.output.printf("from {}", gitrev)
                     
                     base_rev = rev
                     base_path = path[1:]
-                    init_export = False
         
         return gitrev
     
@@ -415,14 +436,6 @@ class ExportRevs:
                 if not self.exporter.quiet:
                     stderr.write(format(self.rev))
                     stderr.flush()
-                
-                if (not self.exporter.export_copies and
-                not any(path.startswith(self.prefix) and
-                path != self.prefix for path in self.paths.keys())):
-                    default = (None, None, None)
-                    (_, src, _) = self.paths.get(self.path, default)
-                    if src is not None:
-                        continue
                 
                 yield (self.rev, self.date, self.author, self.log,
                     self.paths)
