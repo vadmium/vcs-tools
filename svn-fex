@@ -11,7 +11,8 @@ The program is written to:
     * requesting deltas rather than full copies of files where practical
     * requesting exclusion of deltas for ignored files
 * follow branch copies
-* produce identical commits to "git-svn"
+* produce identical commits to "git-svn", except that it
+    * optionally drops commits that are simple branch copies
 * be run incrementally
 
 It does not:
