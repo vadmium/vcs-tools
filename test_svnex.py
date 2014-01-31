@@ -321,6 +321,57 @@ from trunk
 """,
                 output.read())
     
+    def test_first_mergeinfo(self):
+        """Handling of mergeinfo in first exported commit"""
+        repo = self.make_repo((
+            dict(nodes=(
+                dict(action="add", path="trunk", kind="dir"),
+                dict(action="add", path="trunk/file", kind="file",
+                    content=b"original\n"),
+            )),
+            dict(nodes=(
+                dict(action="add", path="branch",
+                    copyfrom_path="trunk", copyfrom_rev=1),
+                dict(action="change", path="branch/file",
+                    content=b"branched\n"),
+            )),
+            dict(nodes=(
+                dict(action="change", path="trunk",
+                    props={"svn:mergeinfo": "/branch:2"}),
+                dict(action="change", path="trunk/file",
+                    content=b"branched\n"),
+            )),
+            dict(nodes=(
+                dict(action="change", path="trunk/file", content=b"new\n"),
+            )),
+        ))
+        url = "file://{}/trunk".format(pathname2url(repo))
+        output = os.path.join(self.dir, "output")
+        with svnex.FastExportFile(output) as fex:
+            exporter = svnex.Exporter(url, fex, root="",
+                rev_map={"/trunk": {3: "refs/trunk"}}, quiet=True)
+            exporter.export("refs/trunk")
+        with open(output, "r", encoding="ascii") as output:
+            self.assertMultiLineEqual("""\
+blob
+mark :1
+data 4
+new
+
+commit refs/trunk
+mark :2
+committer (no author) <(no author)@00000000-0000-0000-0000-000000000000> 0 +0000
+data 60
+
+
+git-svn-id: /trunk@4 00000000-0000-0000-0000-000000000000
+
+from refs/trunk
+M 644 :1 file
+
+""",
+                output.read())
+    
     def test_first_branch(self):
         """Handling of branch copy as first exported commit"""
         repo = self.make_repo((
