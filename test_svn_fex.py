@@ -37,7 +37,7 @@ class BaseTest(TestCase):
         rmtree(self.dir)
         TestCase.tearDown(self)
 
-class Test(BaseTest):
+class RepoTests(BaseTest):
     def make_repo(self, revs):
         repo = os.path.join(self.dir, "repo")
         subprocess.check_call(("svnadmin", "create", repo))
