@@ -299,18 +299,19 @@ class Exporter:
         if editor.mergeinfo:
             if not self.quiet:
                 print(file=stderr)
-            ancestors = Ancestors(self)
+            basehist = Ancestors(self)
             if base_rev:
-                ancestors.add_natural(base_path, base_rev)
+                basehist.add_natural(base_path, base_rev)
             merged = RevisionSet()
-            merged.update(ancestors)
+            ancestors = Ancestors(self)
+            merged.update(basehist)
             mergeinfo = editor.mergeinfo.items()
             for (branch, ranges) in mergeinfo:
                 branch = branch.lstrip("/")
                 for (start, end, _) in ranges:
                     merged.add_segment(branch, start, end)
                     ancestors.add_natural(branch, end)
-            if ancestors == merged:
+            if merged != basehist and ancestors == merged:
                 # TODO: minimise so that only independent branch heads are listed
                 # i.e. do not explicitly merge C if also merging A and B, and C is an ancestor of both A and B
                 for (branch, ranges) in mergeinfo:
