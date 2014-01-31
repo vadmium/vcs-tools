@@ -214,7 +214,7 @@ class Exporter:
             prefix = path.rstrip("/") + "/"
             url = (self.repos_root + path).rstrip("/")
             with iter_revs(self, path, base, end) as revs:
-                for (rev, date, author, log, self.paths) in revs:
+                for (svnrev, date, author, log, self.paths) in revs:
                     commit = self.export_copies
                     
                     # Assuming we are only interested in "trunk":
@@ -230,7 +230,7 @@ class Exporter:
                         commit = src is None
                     
                     if commit:
-                        gitrev = self.commit(rev, date, author, log,
+                        gitrev = self.commit(svnrev, date, author, log,
                             init_export=init_export,
                             base_rev=base_rev, base_path=base_path,
                             gitrev=gitrev,
@@ -244,7 +244,7 @@ class Exporter:
                         self.output.printf("reset {}", git_ref)
                         self.output.printf("from {}", gitrev)
                     
-                    base_rev = rev
+                    base_rev = svnrev
                     base_path = path[1:]
                     
                     # Remember newly exported Git revision
