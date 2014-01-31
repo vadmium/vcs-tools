@@ -146,12 +146,10 @@ class Exporter:
         self.ignore = ignore
         self.export_copies = export_copies
         
-        self.known_branches = dict()
+        self.known_branches = defaultdict(lambda: (list(), list()))
         for (branch, revs) in rev_map.items():
             branch = branch.lstrip("/")
-            starts = list()
-            runs = list()
-            self.known_branches[branch] = (starts, runs)
+            (starts, runs) = self.known_branches[branch]
             start = None
             run = ()
             for (svnrev, gitrev) in sorted(revs.items()):
@@ -248,6 +246,16 @@ class Exporter:
                     
                     base_rev = rev
                     base_path = path[1:]
+                    
+                    # Remember newly exported Git revision
+                    (svnstarts, gitruns) = self.known_branches[base_path]
+                    i = bisect_left(svnstarts, base_rev)
+                    if (i > 0 and
+                    svnstarts[i - 1] + len(gitruns[i - 1]) == base_rev):
+                        gitruns[i - 1].append(gitrev)
+                    else:
+                        svnstarts.insert(i, base_rev)
+                        gitruns.insert(i, [gitrev])
         
         return gitrev
     
