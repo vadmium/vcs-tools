@@ -47,6 +47,7 @@ from collections import defaultdict
 from bisect import bisect_right, bisect_left
 from contextlib import closing
 from subvertpy.properties import parse_mergeinfo_property
+from subvertpy.properties import generate_mergeinfo_property
 from misc import Context
 
 INVALID_REVNUM = -1
@@ -315,7 +316,6 @@ class Exporter:
             merged.update(basehist)
             mergeinfo = editor.mergeinfo.items()
             for (branch, ranges) in mergeinfo:
-                branch = branch.lstrip("/")
                 for (start, end, _) in ranges:
                     merged.add_segment(branch, start, end)
                     ancestors.add_natural(branch, end)
@@ -492,6 +492,9 @@ class RevisionSet:
     
     def __eq__(self, other):
         return self.branches == other.branches
+    
+    def __repr__(self):
+        return generate_mergeinfo_property(self.branches)
 
 class Ancestors(RevisionSet):
     def __init__(self, exporter):
@@ -499,10 +502,12 @@ class Ancestors(RevisionSet):
         RevisionSet.__init__(self)
     
     def add_natural(self, branch, rev):
+        branch = branch.lstrip("/")
         # TODO: global cache
         get_location_segments(self.exporter, self.on_segment, branch, rev)
     
     def on_segment(self, start, end, path):
+        path = "/" + path
         ranges = self.branches[path]
         i = bisect_left(ranges, (start, 0, True))
         # If it exists, ranges[i] is the first >= start
