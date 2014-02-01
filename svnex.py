@@ -240,9 +240,7 @@ class Exporter:
                         )
                         init_export = False
                     else:
-                        if not self.quiet:
-                            stderr.write(": no changes")
-                            stderr.flush()
+                        self.log(": no changes")
                         self.output.printf("reset {}", git_ref)
                         self.output.printf("from {}", gitrev)
                     
@@ -273,9 +271,7 @@ class Exporter:
             self.url = self.url.rstrip("/")
             self.ra.reparent(self.url)
         
-        if not self.quiet:
-            stderr.write(":")
-            stderr.flush()
+        self.log(":")
         editor = RevEditor(self.output, self.quiet)
         
         # Diff editor does not convey deletions when starting
@@ -307,8 +303,7 @@ class Exporter:
         
         merges = list()
         if editor.mergeinfo:
-            if not self.quiet:
-                print(file=stderr)
+            self.log("\n")
             basehist = Ancestors(self)
             if base_rev:
                 basehist.add_natural(base_path, base_rev)
@@ -362,6 +357,11 @@ class Exporter:
         self.output.printf("")
         
         return mark
+    
+    def log(self, message):
+        if not self.quiet:
+            stderr.write(message)
+            stderr.flush()
 
 class PendingSegments:
     def __init__(self, exporter, branch, rev):
@@ -430,9 +430,7 @@ class ExportRevs:
                     self.exporter.ra.reparent(self.url)
                     self.exporter.url = self.url
                 
-                if not self.exporter.quiet:
-                    stderr.write("@")
-                    stderr.flush()
+                self.exporter.log("@")
                 next = self.rev + 1
                 self.rev = None
                 self.exporter.ra.get_log(self.on_revision,
@@ -445,12 +443,9 @@ class ExportRevs:
                 )
                 
                 if self.rev is None:
-                    if not self.exporter.quiet:
-                        stderr.write("(none)")
+                    self.exporter.log("(none)")
                     break
-                if not self.exporter.quiet:
-                    stderr.write(format(self.rev))
-                    stderr.flush()
+                self.exporter.log(format(self.rev))
                 
                 yield (self.rev, self.date, self.author, self.log,
                     self.paths)
@@ -549,9 +544,7 @@ class get_location_segments:
     def on_segment(self, start, end, path):
         if self.cancelled or path is None:
             return
-        if not self.exporter.quiet:
-            stderr.write("\n  /{}:{}-{}".format(path, start, end))
-            stderr.flush()
+        self.exporter.log("\n  /{}:{}-{}".format(path, start, end))
         try:
             self.callback(start, end, path)
         except StopIteration:
