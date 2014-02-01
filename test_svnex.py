@@ -320,6 +320,54 @@ reset refs/heads/branch
 from trunk
 """,
                 output.read())
+    
+    def test_first_branch(self):
+        """Handling of branch copy as first exported commit"""
+        repo = self.make_repo((
+            dict(nodes=(
+                dict(action="add", path="trunk", kind="dir"),
+                dict(action="add", path="branches", kind="dir"),
+                dict(action="add", path="trunk/file", kind="file",
+                    content=b"initial\n"),
+            )),
+            dict(nodes=(
+                dict(action="add", path="branch",
+                    copyfrom_path="trunk", copyfrom_rev=1),
+            )),
+            dict(nodes=(
+                dict(action="change", path="branch/file",
+                    content=b"branched\n"),
+            )),
+        ))
+        url = "file://{}/branch".format(pathname2url(repo))
+        output = os.path.join(self.dir, "output")
+        with svnex.FastExportFile(output) as fex:
+            rev_map = {"trunk": {1: "trunk"}}
+            exporter = svnex.Exporter(url, fex, root="", rev_map=rev_map,
+                quiet=True)
+            exporter.export("refs/branch")
+        with open(output, "r", encoding="ascii") as output:
+            self.assertMultiLineEqual("""\
+reset refs/branch
+from trunk
+blob
+mark :1
+data 9
+branched
+
+commit refs/branch
+mark :2
+committer (no author) <(no author)@00000000-0000-0000-0000-000000000000> 0 +0000
+data 61
+
+
+git-svn-id: /branch@3 00000000-0000-0000-0000-000000000000
+
+from trunk
+M 644 :1 file
+
+""",
+                output.read())
 
 def executable_add(editor):
     root = editor.open_root(0)
