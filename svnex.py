@@ -524,7 +524,12 @@ class get_location_segments:
         self.exporter = exporter
         self.callback = callback
         
-        with self.exporter.progress("location history:"):
+        if rev == INVALID_REVNUM:
+            disprev = ""
+        else:
+            disprev = "@{}".format(rev)
+        msg = "/{}{} location history:".format(path, disprev)
+        with self.exporter.progress(msg):
             root_len = len(self.exporter.repos_root)
             prefix = (self.exporter.url + "/")[root_len + 1:]
             if (path + "/").startswith(prefix):
