@@ -382,8 +382,8 @@ class TestAuthorsFile(BaseTest):
         argv = ["svn-fex", "--git-ref", "refs/ref", "--authors", authors,
             "--file", output, "file:///dummy"]
         with substattr(sys, "argv", argv):
-            self.svn_fex["main"].__globals__["Repo"] = self.Repo
-            self.svn_fex["main"]()
+            self.svn_fex.Repo = self.Repo
+            self.svn_fex.main()
         
         self.assertEqual(dict(
             user="Some Body <whoever@where.ever>",
