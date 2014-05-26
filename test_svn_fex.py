@@ -1,12 +1,11 @@
 #! /usr/bin/env python3
 
 from unittest import TestCase
-from tempfile import mkdtemp
-from shutil import rmtree
+from tempfile import TemporaryDirectory
 import subprocess
 import os.path
 from urllib.request import pathname2url
-import runpy
+import imp
 from subprocess import Popen
 from subvertpy.properties import (
     PROP_REVISION_DATE,
@@ -25,17 +24,15 @@ import sys
 class BaseTest(TestCase):
     def setUp(self):
         TestCase.setUp(self)
-        self.svn_fex = runpy.run_path("svn-fex")
         
-        # Massive hack to restore the module's global variables, which are
-        # probably all nulled out by garbage collection
-        self.svn_fex["main"].__globals__.update(self.svn_fex)
+        path = os.path.join(os.path.dirname(__file__), "svn-fex")
+        with open(path, "rb") as file:
+            self.svn_fex = imp.load_module("svn-fex", file, path,
+                ("", "rb", imp.PY_SOURCE))
         
-        self.dir = mkdtemp(prefix="svn-fex-")
-    
-    def tearDown(self):
-        rmtree(self.dir)
-        TestCase.tearDown(self)
+        tempdir = TemporaryDirectory(prefix="svn-fex-")
+        self.addCleanup(tempdir.cleanup)
+        self.dir = tempdir.name
 
 class RepoTests(BaseTest):
     def make_repo(self, revs):
@@ -83,8 +80,8 @@ class RepoTests(BaseTest):
         ))
         url = "file://{}/trunk".format(pathname2url(repo))
         output = os.path.join(self.dir, "output")
-        with self.svn_fex["FastExportFile"](output) as fex:
-            exporter = self.svn_fex["Exporter"](url, fex, root="", quiet=True)
+        with self.svn_fex.FastExportFile(output) as fex:
+            exporter = self.svn_fex.Exporter(url, fex, root="", quiet=True)
             exporter.export("refs/ref")
         with open(output, "r", encoding="ascii") as output:
             self.assertMultiLineEqual("""\
@@ -117,8 +114,8 @@ git-svn-id: /trunk@2 00000000-0000-0000-0000-000000000000
         url = "file://{}".format(pathname2url(repo))
         output = os.path.join(self.dir, "output")
         authors = {"user": "user <user>"}
-        with self.svn_fex["FastExportFile"](output) as output:
-            exporter = self.svn_fex["Exporter"](url, output,
+        with self.svn_fex.FastExportFile(output) as output:
+            exporter = self.svn_fex.Exporter(url, output,
                 author_map=authors, quiet=True)
             exporter.export("refs/ref")
     
@@ -140,8 +137,8 @@ git-svn-id: /trunk@2 00000000-0000-0000-0000-000000000000
         ))
         url = "file://{}".format(pathname2url(repo))
         output = os.path.join(self.dir, "output")
-        with self.svn_fex["FastExportFile"](output) as fex:
-            exporter = self.svn_fex["Exporter"](url, fex, root="",
+        with self.svn_fex.FastExportFile(output) as fex:
+            exporter = self.svn_fex.Exporter(url, fex, root="",
                 rev_map={"": {1: "refs/ref"}}, ignore=("igfile", "igdir"),
                 quiet=True)
             exporter.export("refs/ref")
@@ -177,8 +174,8 @@ D file
         subprocess.check_call(("git", "init", "--quiet", "--", git))
         script = 'cd "$1" && git fast-import --quiet'
         importer = ("sh", "-c", script, "--", git)
-        with self.svn_fex["FastExportPipe"](importer) as importer:
-            exporter = self.svn_fex["Exporter"](url, importer, root="",
+        with self.svn_fex.FastExportPipe(importer) as importer:
+            exporter = self.svn_fex.Exporter(url, importer, root="",
                 quiet=True)
             exporter.export("refs/heads/master")
         cmd = ("git", "rev-parse", "--verify", "refs/heads/master")
@@ -187,11 +184,10 @@ D file
     
     def test_executable(self):
         """Order of setting file mode and contents should not matter"""
-        self.svn_fex["main"].__globals__["RemoteAccess"] = ExecutableRa
+        self.svn_fex.RemoteAccess = ExecutableRa
         output = os.path.join(self.dir, "output")
-        with self.svn_fex["FastExportFile"](output) as fex:
-            exporter = self.svn_fex["Exporter"]("file:///repo", fex,
-                quiet=True)
+        with self.svn_fex.FastExportFile(output) as fex:
+            exporter = self.svn_fex.Exporter("file:///repo", fex, quiet=True)
             exporter.export("refs/ref")
         with open(output, "r", encoding="ascii") as output:
             self.assertMultiLineEqual("""\
@@ -251,8 +247,8 @@ M 755 :2 file2
         ))
         url = "file://{}/branch".format(pathname2url(repo))
         output = os.path.join(self.dir, "output")
-        with self.svn_fex["FastExportFile"](output) as fex:
-            exporter = self.svn_fex["Exporter"](url, fex, root="",
+        with self.svn_fex.FastExportFile(output) as fex:
+            exporter = self.svn_fex.Exporter(url, fex, root="",
                 export_copies=True, quiet=True)
             exporter.export("refs/branch")
         with open(output, "r", encoding="ascii") as output:
@@ -397,8 +393,8 @@ class TestAuthorsFile(BaseTest):
         argv = ["svn-fex", "--git-ref", "refs/ref", "--authors", authors,
             "--file", output, "file:///dummy"]
         with substattr(sys, "argv", argv):
-            self.svn_fex["main"].__globals__["Exporter"] = self.Exporter
-            self.svn_fex["main"]()
+            self.svn_fex.Exporter = self.Exporter
+            self.svn_fex.main()
         
         self.assertEqual(dict(
             user="Some Body <whoever@where.ever>",
