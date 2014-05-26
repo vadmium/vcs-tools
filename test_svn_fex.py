@@ -18,8 +18,10 @@ from io import BytesIO
 from email.generator import BytesGenerator
 import subvertpy.delta
 from functools import partial
+from shorthand import substattr
+import sys
 
-class Test(TestCase):
+class BaseTest(TestCase):
     def setUp(self):
         TestCase.setUp(self)
         
@@ -31,7 +33,8 @@ class Test(TestCase):
         tempdir = TemporaryDirectory(prefix="svn-fex-")
         self.addCleanup(tempdir.cleanup)
         self.dir = tempdir.name
-    
+
+class Test(BaseTest):
     def make_repo(self, revs):
         repo = os.path.join(self.dir, "repo")
         subprocess.check_call(("svnadmin", "create", repo))
@@ -77,7 +80,7 @@ class Test(TestCase):
         ))
         url = "file://{}/trunk".format(pathname2url(repo))
         export = os.path.join(self.dir, "export")
-        self.svn_fex.Repo(url, "ref", file=export, root="", quiet=True)
+        self.svn_fex.Repo(url, "refs/ref", file=export, root="", quiet=True)
         with open(export, "r", encoding="ascii") as export:
             self.assertMultiLineEqual("""\
 commit refs/ref
@@ -109,8 +112,8 @@ git-svn-id: /trunk@2 00000000-0000-0000-0000-000000000000
         url = "file://{}".format(pathname2url(repo))
         export = os.path.join(self.dir, "export")
         authors = {"user": "user <user>"}
-        self.svn_fex.Repo(url, "ref", file=export, author_map=authors,
-            quiet=True)
+        self.svn_fex.Repo(url, "refs/ref", file=export,
+            author_map=authors, quiet=True)
     
     def test_first_delete(self):
         """Detection of deletion in first commit"""
@@ -130,8 +133,9 @@ git-svn-id: /trunk@2 00000000-0000-0000-0000-000000000000
         ))
         url = "file://{}".format(pathname2url(repo))
         export = os.path.join(self.dir, "export")
-        self.svn_fex.Repo(url, "ref", file=export, root="", base_rev=1,
-            ignore=("igfile", "igdir"), quiet=True)
+        self.svn_fex.Repo(url, "refs/ref", file=export, root="",
+            rev_map={"": {1: "refs/ref"}}, ignore=("igfile", "igdir"),
+            quiet=True)
         with open(export, "r", encoding="ascii") as export:
             self.assertMultiLineEqual("""\
 commit refs/ref
@@ -141,7 +145,7 @@ data 54
 
 git-svn-id: @2 00000000-0000-0000-0000-000000000000
 
-from ref
+from refs/ref
 D file
 
 """,
@@ -164,8 +168,8 @@ D file
         subprocess.check_call(("git", "init", "--quiet", "--", git))
         script = 'cd "$1" && git fast-import --quiet'
         importer = ("sh", "-c", script, "--", git)
-        self.svn_fex.Repo(url, "heads/master", importer=importer, root="",
-            quiet=True)
+        self.svn_fex.Repo(url, "refs/heads/master", importer=importer,
+            root="", quiet=True)
         cmd = ("git", "rev-parse", "--verify", "refs/heads/master")
         rev = subprocess.check_output(cmd, cwd=git).decode("ascii").strip()
         self.assertEqual("82aeb20279a1269f048243a603b141ee0ea204e9", rev)
@@ -174,7 +178,8 @@ D file
         """Order of setting file mode and contents should not matter"""
         self.svn_fex.RemoteAccess = ExecutableRa
         export = os.path.join(self.dir, "export")
-        self.svn_fex.Repo("file:///repo", "ref", file=export, quiet=True)
+        self.svn_fex.Repo("file:///repo", "refs/ref", file=export,
+            quiet=True)
         with open(export, "r", encoding="ascii") as export:
             self.assertMultiLineEqual("""\
 blob
@@ -233,7 +238,7 @@ M 755 :2 file2
         ))
         url = "file://{}/branch".format(pathname2url(repo))
         export = os.path.join(self.dir, "export")
-        self.svn_fex.Repo(url, "branch", file=export, root="",
+        self.svn_fex.Repo(url, "refs/branch", file=export, root="",
             export_copies=True, quiet=True)
         with open(export, "r", encoding="ascii") as export:
             self.assertMultiLineEqual("""\
@@ -362,6 +367,31 @@ class ExecutableReporter:
         self.finish = diff
     def set_path(self, *pos):
         pass
+
+class TestAuthorsFile(BaseTest):
+    """Parsing authors file"""
+    def runTest(self):
+        authors = os.path.join(self.dir, "authors")
+        with open(authors, "w") as file:
+            file.write(
+                "user = Some Body <whoever@where.ever>\n"
+                "tricky = E = mc squared\n"
+            )
+        
+        output = os.path.join(self.dir, "output")
+        argv = ["svn-fex", "--git-ref", "refs/ref", "--authors", authors,
+            "--file", output, "file:///dummy"]
+        with substattr(sys, "argv", argv):
+            self.svn_fex["main"].__globals__["Repo"] = self.Repo
+            self.svn_fex["main"]()
+        
+        self.assertEqual(dict(
+            user="Some Body <whoever@where.ever>",
+            tricky="E = mc squared",
+        ), self.author_map)
+    
+    def Repo(self, *pos, author_map, **kw):
+        self.author_map = author_map
 
 def dump_message(file, headers, props=None, content=None):
     msg = Message()
