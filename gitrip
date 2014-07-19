@@ -4,7 +4,7 @@
 
 from urllib.request import urlopen
 from html.parser import HTMLParser
-from subprocess import (check_call, Popen, check_output, CalledProcessError)
+from subprocess import (call, check_call, Popen, check_output)
 from os import environ
 import subprocess
 from urllib.parse import (urlsplit, parse_qs, urlencode, urlunsplit, urljoin)
@@ -19,10 +19,7 @@ def main(url):
     
     while True:
         pending.append(scrape_commit(url, commit))
-        command = ("git", "checkout", "-q", pending[-1]["parents"][0])
-        try:
-            check_call(command, bufsize=-1)
-        except CalledProcessError:
+        if call(("git", "checkout", "-q", pending[-1]["parents"][0])):
             (commit,) = pending[-1]["parents"]
             continue
         else:
@@ -118,14 +115,14 @@ def commit_normal(url, hash, env):
     patch = double_decode(patch)
     
     command = "git am --keep-cr --whitespace=nowarn"
-    check_input(command.split(), bufsize=-1, input=patch, env=env)
+    check_input(command.split(), input=patch, env=env)
     
     if hash != git_head_hash():
         # Commit message was mangled if second line is not blank
         (message,) = message_from_bytes(patch).get_all("subject")
         message = message[len("[PATCH] "):].replace("\n ", "\n").encode()
         command = "git commit --amend --file=- --quiet"
-        check_input(command.split(), bufsize=-1, input=message, env=env)
+        check_input(command.split(), input=message, env=env)
 
 def commit_merge(url, commit, env):
     with open(".git/MERGE_HEAD", "w") as file:
@@ -156,13 +153,13 @@ def commit_merge(url, commit, env):
     patch = b"\n".join(patch)
     
     command = "git apply --index --whitespace=nowarn"
-    check_input(command.split(), bufsize=-1, input=patch)
+    check_input(command.split(), input=patch)
     
     command = ("git", "commit", "--file=-",
         "--author={name} <{email}>".format_map(commit),
         "--date={date}".format_map(commit),
     )
-    check_input(command, bufsize=-1, input=message, env=env)
+    check_input(command, input=message, env=env)
 
 def gitweb_download(url, query):
     disp_url = urlunsplit(("", "", "", urlencode(query), ""))
@@ -191,16 +188,14 @@ def double_decode(patch):
     return bytes(patch.decode(), "latin-1")
 
 def git_head_hash():
-    hash = check_output("git rev-parse HEAD".split(), bufsize=-1)
+    hash = check_output("git rev-parse HEAD".split())
     return hash.strip().decode()
 
-def check_input(*args, **kw):
-    input = kw.pop("input")
-    with Popen(*args, stdin=subprocess.PIPE, **kw) as proc:
+def check_input(*args, input, **kw):
+    with Popen(*args, stdin=subprocess.PIPE, bufsize=-1, **kw) as proc:
         proc.communicate(input)
     if proc.returncode:
-        raise EnvironmentError("Process failed "
-            "with exit status {proc.returncode}".format_map(locals()))
+        raise SystemExit(proc.returncode)
 
 if __name__ == "__main__":
     from funcparams import command
