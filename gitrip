@@ -64,6 +64,9 @@ def scrape_commit(url, commit):
     )
 
 class CommitParser(HTMLParser):
+    def __init__(self):
+        return HTMLParser.__init__(self, convert_charrefs=True)
+    
     def reset(self):
         self.parents = list()
         
