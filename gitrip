@@ -7,7 +7,6 @@ from html.parser import HTMLParser
 from subprocess import (check_call, Popen, check_output, CalledProcessError)
 from os import environ
 import subprocess
-from lib import Record
 from urllib.parse import (urlsplit, parse_qs, urlencode, urlunsplit, urljoin)
 from email import message_from_bytes
 from email.utils import parsedate_tz
@@ -20,30 +19,30 @@ def main(url):
     
     while True:
         pending.append(scrape_commit(url, commit))
-        command = ("git", "checkout", "-q", pending[-1].parents[0])
+        command = ("git", "checkout", "-q", pending[-1]["parents"][0])
         try:
             check_call(command, bufsize=-1)
         except CalledProcessError:
-            (commit,) = pending[-1].parents
+            (commit,) = pending[-1]["parents"]
             continue
         else:
             break
     
     for commit in reversed(pending):
         env = dict(environ,
-            GIT_COMMITTER_NAME=commit.name,
-            GIT_COMMITTER_EMAIL=commit.email,
-            GIT_COMMITTER_DATE=commit.date,
+            GIT_COMMITTER_NAME=commit["name"],
+            GIT_COMMITTER_EMAIL=commit["email"],
+            GIT_COMMITTER_DATE=commit["date"],
         )
-        if len(commit.parents) > 1:
+        if len(commit["parents"]) > 1:
             commit_merge(url, commit, env)
         else:
-            commit_normal(url, commit.hash, env)
+            commit_normal(url, commit["hash"], env)
         
-        if commit.hash != git_head_hash():
+        if commit["hash"] != git_head_hash():
             generated = git_head_hash()
             raise ValueError("Generated hash is {generated} instead of "
-                "{commit.hash}".format_map(locals()))
+                "{commit[hash]}".format_map(locals()))
 
 def scrape_commit(url, commit):
     url = gitweb_download(url, (("a", "commit"), ("h", commit)))
@@ -56,7 +55,7 @@ def scrape_commit(url, commit):
     (offset, _) = offset.split(")")
     (_, offset) = offset.rsplit(" ", 1)
     
-    return Record(
+    return dict(
         hash=parser.commit,
         parents=parser.parents,
         name=parser.committer_name,
@@ -127,12 +126,12 @@ def commit_normal(url, hash, env):
 
 def commit_merge(url, commit, env):
     with open(".git/MERGE_HEAD", "w") as file:
-        for parent in commit.parents[1:]:
+        for parent in commit["parents"][1:]:
             file.write(parent)
             file.write("\n")
     
     patch = gitweb_download(url, (("a", "commitdiff_plain"),
-        ("h", commit.hash), ("hp", commit.parents[0])))
+        ("h", commit["hash"]), ("hp", commit["parents"][0])))
     patch = double_decode(patch)
     (message, patch) = patch.split(b"\n---\n", 1)
     (_, message) = message.split(b"\n\n", 1)
@@ -157,8 +156,8 @@ def commit_merge(url, commit, env):
     check_input(command.split(), bufsize=-1, input=patch)
     
     command = ("git", "commit", "--file=-",
-        "--author={commit.name} <{commit.email}>".format_map(locals()),
-        "--date={commit.date}".format_map(locals()),
+        "--author={name} <{email}>".format_map(commit),
+        "--date={date}".format_map(commit),
     )
     check_input(command, bufsize=-1, input=message, env=env)
 
