@@ -14,18 +14,20 @@ from calendar import timegm
 from io import BytesIO
 
 def main(url):
-    (commit,) = parse_qs(urlsplit(url).query)["h"]
+    commits = set(parse_qs(urlsplit(url).query)["h"])
     pending = list()
     
-    while True:
+    while commits:
+        commit = commits.pop()
         pending.append(scrape_commit(url, commit))
-        if call(("git", "checkout", "-q", pending[-1]["parents"][0])):
-            (commit,) = pending[-1]["parents"]
-            continue
-        else:
-            break
+        for parent in pending[-1]["parents"]:
+            if parent in commits:
+                continue
+            if call(("git", "checkout", "-q", parent)):
+                commits.add(parent)
     
     for commit in reversed(pending):
+        check_call(("git", "checkout", "-q", commit["parents"][0]))
         env = dict(environ,
             GIT_COMMITTER_NAME=commit["name"],
             GIT_COMMITTER_EMAIL=commit["email"],
