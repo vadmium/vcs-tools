@@ -1,7 +1,5 @@
 #! /usr/bin/env python3
 
-"""Rescue commits available from "gitweb" site"""
-
 from urllib.request import urlopen
 from html.parser import HTMLParser
 from subprocess import (call, check_call, Popen, check_output)
@@ -14,6 +12,11 @@ from calendar import timegm
 from io import BytesIO
 
 def main(url):
+    """Rescue commits available from a "gitweb" site
+    
+    url: 
+    """
+    
     commits = set(parse_qs(urlsplit(url).query)["h"])
     pending = list()
     
