@@ -122,7 +122,10 @@ def commit_normal(url, hash, env):
     if hash != git_head_hash():
         # Commit message was mangled if second line is not blank
         (message,) = message_from_bytes(patch).get_all("subject")
-        message = message[len("[PATCH] "):].replace("\n ", "\n").encode()
+        prefix = "[PATCH] "
+        if message.startswith(prefix):
+            message = message[len(prefix):]
+        message = message.replace("\n ", "\n").encode()
         command = "git commit --amend --file=- --quiet"
         check_input(command.split(), input=message, env=env)
 
