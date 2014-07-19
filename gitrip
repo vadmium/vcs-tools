@@ -38,8 +38,8 @@ def main(url):
         else:
             commit_normal(url, commit["hash"], env)
         
-        if commit["hash"] != git_head_hash():
-            generated = git_head_hash()
+        generated = git_head_hash()
+        if generated != commit["hash"]:
             raise ValueError("Generated hash is {generated} instead of "
                 "{commit[hash]}".format_map(locals()))
 
