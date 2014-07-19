@@ -199,5 +199,6 @@ def check_input(*args, **kw):
         raise EnvironmentError("Process failed "
             "with exit status {proc.returncode}".format_map(locals()))
 
-from lib import run_main
-run_main(__name__)
+if __name__ == "__main__":
+    from funcparams import command
+    command()
