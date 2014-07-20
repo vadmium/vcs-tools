@@ -176,7 +176,7 @@ def gitweb_download(url, query):
         data = BytesIO()
         size = 0
         while True:
-            print(disp_url, size // 1000, "KB", end="\r")
+            print(disp_url, size // 1000, "kB", end="\r")
             chunk = file.read(0x10000)
             if not chunk:
                 break
