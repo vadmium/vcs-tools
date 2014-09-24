@@ -19,7 +19,7 @@ from email.generator import BytesGenerator
 import subvertpy.delta, subvertpy.repos
 from functools import partial
 from streams import dummywriter
-from shorthand import substattr
+from unittest.mock import patch
 import sys
 
 class TempDirTest(TestCase):
@@ -181,7 +181,7 @@ D file
     
     def test_executable(self):
         """Order of setting file mode and contents should not matter"""
-        with substattr(svnex, "RemoteAccess", ExecutableRa):
+        with patch("svnex.RemoteAccess", ExecutableRa):
             output = os.path.join(self.dir, "output")
             with svnex.FastExportFile(output) as fex:
                 exporter = svnex.Exporter("file:///repo", fex, quiet=True)
@@ -619,7 +619,7 @@ class TestAuthorsFile(TempDirTest):
         output = os.path.join(self.dir, "output")
         argv = ["svn-fex", "--git-ref", "refs/ref", "--authors", authors,
             "--file", output, "file:///dummy"]
-        with substattr(sys, "argv", argv), substattr(svnex, self.Exporter):
+        with patch("sys.argv", argv), patch("svnex.Exporter", self.Exporter):
             svnex.main()
         
         self.assertEqual(dict(

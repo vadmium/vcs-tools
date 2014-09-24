@@ -40,7 +40,7 @@ from subvertpy import SubversionException
 from subprocess import Popen
 import subprocess
 import argparse
-from funcparams import splitdoc
+from clifunc import splitdoc
 from errno import EPIPE
 from contextlib import contextmanager
 import subvertpy.ra
