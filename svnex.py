@@ -33,7 +33,7 @@ from subvertpy.properties import (
     PROP_EXECUTABLE,
     PROP_MERGEINFO,
 )
-from sys import stderr, argv, exc_info
+from sys import stderr, exc_info
 from subvertpy.properties import time_from_cstring
 from io import SEEK_END
 from subvertpy import SubversionException
