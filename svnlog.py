@@ -3,6 +3,7 @@ from __future__ import generator_stop
 from sys import stdin
 from datetime import datetime
 from xml.dom import pulldom, minidom
+from collections import namedtuple
 
 def main(*, copies=False, only_to="/", only_from="/", not_from=()):
     only_to = parse_path(only_to)
@@ -10,55 +11,69 @@ def main(*, copies=False, only_to="/", only_from="/", not_from=()):
     only_from = parse_path(only_from)
     
     prev = None
-    for [rev, rev_copies] in iter_svn_copies(stdin.buffer):
-        assert prev is None or rev == prev - 1
+    for log in iter_svnlog(stdin.buffer):
+        assert prev is None or log.revision == prev - 1
         if copies:
-            show_copies(rev, rev_copies,
+            show_copies(log.revision, log.paths,
                 only_to=only_to, only_from=only_from, not_from=not_from)
         else:
-            show_rev(rev, rev_copies)
-        prev = rev
+            show_rev(log)
+        prev = log.revision
     else:
         assert prev in (None, 1)
 
-def show_rev(rev, copies):
+def show_rev(log):
     print("---")
-    print(f"r{rev} | ??? | ????-??-?? ??:??:?? +????")
-    if copies is not None:
+    if log.author is None:
+        author = ""
+    else:
+        author = f" | {log.author}"
+    print(f"r{log.revision}{author} | {log.date}")
+    if log.paths is not None:
         print("Changed paths:")
-        for [path, from_rev, from_path] in copies:
-            path = "/".join(path)
-            from_path = "/".join(from_path)
-            print(f"   A /{path} (from /{from_path}:{from_rev}")
+        for path in log.paths:
+            action = ("MA", "DR")[path.is_delete][path.is_add]
+            if path.copyfrom_rev is None:
+                copyfrom = ""
+            else:
+                from_path = "/".join(path.copyfrom_path)
+                copyfrom = f" (from {from_path}:{path.copyfrom_rev})"
+            print(f"   {action} /{'/'.join(path.path)}{copyfrom}")
 
-def show_copies(rev, copies, *, only_to, only_from, not_from):
-    if copies is None:
+def show_copies(rev, paths, *, only_to, only_from, not_from):
+    if paths is None:
         return
-    for [path, from_rev, from_path] in copies:
+    for path in paths:
         if (
-            path[:len(only_to)] != only_to[:len(path)] or
+            path.copyfrom_rev is None or
+            path.path[:len(only_to)] != only_to[:len(path.path)]
+        ):
+            continue
+        from_path = path.copyfrom_path
+        from_rev = path.copyfrom_rev
+        if (
             from_path[:len(only_from)] != only_from[:len(from_path)] or
             any(from_path[:len(x)] == x for x in not_from)
         ):
             continue
         
-        max_common = min(len(path), len(from_path))
+        max_common = min(len(path.path), len(from_path))
         for i in range(max_common):
-            if path[i] != from_path[i]:
+            if path.path[i] != from_path[i]:
                 break
         else:
             i = max_common
-        prefix = path[:i]
+        prefix = path.path[:i]
         
         max_common -= i
         for i in range(max_common):
-            if path[-1 - i] != from_path[-1 - i]:
+            if path.path[-1 - i] != from_path[-1 - i]:
                 break
         else:
             i = max_common
-        suffix = path[len(path) - i:]
+        suffix = path.path[len(path.path) - i:]
         
-        path = path[len(prefix):len(path) - len(suffix)]
+        path = path.path[len(prefix):len(path.path) - len(suffix)]
         path = "/".join(path)
         from_path = from_path[len(prefix):len(from_path) - len(suffix)]
         from_path = "/".join(from_path)
@@ -71,7 +86,7 @@ def show_copies(rev, copies, *, only_to, only_from, not_from):
             copy = f"{copy}/{'/'.join(suffix)}"
         print(copy)
 
-def iter_svn_copies(stream):
+def iter_svnlog(stream):
     stream = pulldom.parse(stream)
     [event, node] = next_content(stream)
     with node:
@@ -92,22 +107,25 @@ def iter_svn_copies(stream):
             node.normalize()
             [node] = node.childNodes
             assert isinstance(node, minidom.Text)
-            node.data
+            author = node.data
             [event, node] = next_content(stream)
             assert event == pulldom.START_ELEMENT
+        else:
+            author = None
         
         assert node.tagName == "date"
         stream.expandNode(node)
         node.normalize()
         [node] = node.childNodes
         assert isinstance(node, minidom.Text)
-        datetime.strptime(node.data, "%Y-%m-%dT%H:%M:%S.%fZ")
+        date = datetime.strptime(node.data, "%Y-%m-%dT%H:%M:%S.%fZ")
         
         [event, node] = next_content(stream)
         # A commit without paths is strange, but possible
         if event == pulldom.START_ELEMENT:
             assert node.tagName == "paths"
-            copies = list()
+            paths = list()
+            parents = set()
             while True:
                 [event, path_node] = next_content(stream)
                 if event != pulldom.START_ELEMENT:
@@ -115,30 +133,46 @@ def iter_svn_copies(stream):
                 assert path_node.tagName == "path"
                 stream.expandNode(path_node)
                 path_node.normalize()
-                if not path_node.hasAttribute("copyfrom-rev"):
-                    continue
-                assert path_node.getAttribute("action") in set("AR")
-                
+                action = path_node.getAttribute("action")
+                assert action in set("AMRD")
+                is_add = action in set("AR")
+                is_copy = path_node.hasAttribute("copyfrom-rev")
+                assert is_copy == path_node.hasAttribute("copyfrom-path")
+                if is_copy:
+                    assert is_add
+                    from_rev = int(path_node.getAttribute("copyfrom-rev"))
+                    assert from_rev < rev
+                    from_path = path_node.getAttribute("copyfrom-path")
+                    from_path = parse_path(from_path)
+                else:
+                    from_rev = None
+                    from_path = None
                 [node] = path_node.childNodes
                 assert isinstance(node, minidom.Text)
                 path_split = parse_path(node.data)
-                
-                from_rev = path_node.getAttribute("copyfrom-rev")
-                from_path = path_node.getAttribute("copyfrom-path")
-                from_path = parse_path(from_path)
-                copies.append((path_split, from_rev, from_path))
+                assert path_split not in parents
+                for n in range(len(path_split)):
+                    parents.add(path_split[:n])
+                parents.add(path_split)
+                paths.append(PathLog(path_split,
+                    is_delete=action in set("DR"), is_add=is_add,
+                    copyfrom_rev=from_rev, copyfrom_path=from_path))
             assert event == pulldom.END_ELEMENT
             [event, _] = next_content(stream)
         else:
-            copies = None
+            paths = None
         assert event == pulldom.END_ELEMENT
-        yield (rev, copies)
+        yield Log(rev, author=author, date=date, paths=paths)
+
+Log = namedtuple("Log", ("revision", "author", "date", "paths"))
+PathLog = namedtuple("PathLog",
+    ("path", "is_delete", "is_add", "copyfrom_rev", "copyfrom_path"))
 
 def parse_path(path):
     if path == "/":
-        return []
+        return ()
     assert path.startswith("/")
-    return path[1:].split("/")
+    return tuple(path[1:].split("/"))
 
 def next_content(stream):
     skip = {
