@@ -5,7 +5,10 @@ from datetime import datetime
 from xml.dom import pulldom, minidom
 from collections import namedtuple
 
-def main(*, copies=False, only_to="/", only_from="/", not_from=()):
+def main(*,
+    starting=0, before=None, copies=False,
+    only_to="/", only_from="/", not_from=(),
+):
     only_to = parse_path(only_to)
     not_from = tuple(map(parse_path, not_from))
     only_from = parse_path(only_from)
@@ -13,6 +16,10 @@ def main(*, copies=False, only_to="/", only_from="/", not_from=()):
     prev = None
     for log in iter_svnlog(stdin.buffer):
         assert prev is None or log.revision == prev - 1
+        if log.revision >= before:
+            continue
+        if log.revision < starting:
+            break
         if copies:
             show_copies(log.revision, log.paths,
                 only_to=only_to, only_from=only_from, not_from=not_from)
@@ -192,6 +199,8 @@ if __name__ == "__main__":
         from argparse import ArgumentParser
         
         parser = ArgumentParser()
+        parser.add_argument("--starting", type=int, default=0)
+        parser.add_argument("--before", type=int)
         parser.add_argument("--copies", action="store_true")
         parser.add_argument("--only-to", default="/")
         from_group = parser.add_mutually_exclusive_group()
@@ -199,8 +208,11 @@ if __name__ == "__main__":
         from_group.add_argument("--not-from",
             action="append", default=list())
         args = parser.parse_args()
-        main(copies=args.copies, only_to=args.only_to,
-            only_from=args.only_from, not_from=args.not_from)
+        main(
+            starting=args.starting, before=args.before, copies=args.copies,
+            only_to=args.only_to,
+            only_from=args.only_from, not_from=args.not_from,
+        )
     except KeyboardInterrupt:
         signal(SIGINT, SIG_DFL)
         kill(getpid(), SIGINT)
