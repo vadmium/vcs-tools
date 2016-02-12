@@ -9,9 +9,14 @@ def main(*, only_to="/", only_from="/", not_from=()):
     not_from = tuple(map(parse_path, not_from))
     only_from = parse_path(only_from)
     
+    prev = None
     for [rev, copies] in iter_svn_copies(stdin.buffer):
-        show_copies(rev, copies,
+        assert prev is None or rev == prev - 1
+        show_copies(rev, rev_copies,
             only_to=only_to, only_from=only_from, not_from=not_from)
+        prev = rev
+    else:
+        assert prev in (None, 1)
 
 def show_copies(rev, copies, *, only_to, only_from, not_from):
     if copies is None:
