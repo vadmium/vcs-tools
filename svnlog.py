@@ -6,7 +6,7 @@ from xml.dom import pulldom, minidom
 from collections import namedtuple
 
 def main(*,
-    starting=0, before=None, copies=False,
+    starting=0, before=None, copies=False, summarize=False,
     only_to="/", only_from="/", not_from=(),
     rel_path=None,
 ):
@@ -39,11 +39,11 @@ def main(*,
                     match = False
                 if not match:
                     continue
-            show_rev(log)
+            show_rev(log, summarize=summarize)
     else:
         assert prev in (None, 1)
 
-def show_rev(log):
+def show_rev(log, *, summarize):
     print("---")
     if log.author is None:
         author = ""
@@ -51,8 +51,22 @@ def show_rev(log):
         author = f" | {log.author}"
     print(f"r{log.revision}{author} | {log.date}")
     if log.paths is not None:
-        print("Changed paths:")
-        for path in log.paths:
+        if summarize:
+            paths = iter(log.paths)
+            summary = next(paths, None)
+            if summary is None:
+                return
+            common = summary.path
+            for path in paths:
+                common = common_prefix(common, path.path)
+            if common < summary.path:
+                summary = PathLog(common, is_delete=False, is_add=False,
+                    copyfrom_rev=None, copyfrom_path=None)
+            paths = (summary,)
+        else:
+            print("Changed paths:")
+            paths = log.paths
+        for path in paths:
             action = ("MA", "DR")[path.is_delete][path.is_add]
             if path.copyfrom_rev is None:
                 copyfrom = ""
@@ -78,15 +92,8 @@ def show_copies(rev, paths, *, only_to, only_from, not_from):
         ):
             continue
         
-        max_common = min(len(path.path), len(from_path))
-        for i in range(max_common):
-            if path.path[i] != from_path[i]:
-                break
-        else:
-            i = max_common
-        prefix = path.path[:i]
-        
-        max_common -= i
+        prefix = common_prefix(path.path, from_path)
+        max_common = min(len(path.path), len(from_path)) - len(prefix)
         for i in range(max_common):
             if path.path[-1 - i] != from_path[-1 - i]:
                 break
@@ -206,6 +213,15 @@ def next_content(stream):
         if event not in skip:
             return result
 
+def common_prefix(a, b):
+    max_common = min(len(a), len(b))
+    for i in range(max_common):
+        if a[i] != b[i]:
+            break
+    else:
+        i = max_common
+    return a[:i]
+
 if __name__ == "__main__":
     from signal import signal, SIGINT, SIG_DFL
     from os import kill, getpid
@@ -215,16 +231,23 @@ if __name__ == "__main__":
         parser = ArgumentParser()
         parser.add_argument("--starting", type=int, default=0)
         parser.add_argument("--before", type=int)
-        parser.add_argument("--copies", action="store_true")
+        
+        group = parser.add_mutually_exclusive_group()
+        group.add_argument("--copies", action="store_true")
+        group.add_argument("--summarize", action="store_true")
+        
         parser.add_argument("--only-to", default="/")
+        
         from_group = parser.add_mutually_exclusive_group()
         from_group.add_argument("--only-from", default="/")
         from_group.add_argument("--not-from",
             action="append", default=list())
+        
         parser.add_argument("--rel-path")
         args = parser.parse_args()
         main(
-            starting=args.starting, before=args.before, copies=args.copies,
+            starting=args.starting, before=args.before,
+            copies=args.copies, summarize=args.summarize,
             only_to=args.only_to,
             only_from=args.only_from, not_from=args.not_from,
             rel_path=args.rel_path,
