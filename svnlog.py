@@ -16,7 +16,8 @@ def main(*,
     prev = None
     for log in iter_svnlog(stdin.buffer):
         assert prev is None or log.revision == prev - 1
-        if log.revision >= before:
+        prev = log.revision
+        if before is not None and log.revision >= before:
             continue
         if log.revision < starting:
             break
@@ -25,7 +26,6 @@ def main(*,
                 only_to=only_to, only_from=only_from, not_from=not_from)
         else:
             show_rev(log)
-        prev = log.revision
     else:
         assert prev in (None, 1)
 
