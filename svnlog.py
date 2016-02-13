@@ -8,10 +8,13 @@ from collections import namedtuple
 def main(*,
     starting=0, before=None, copies=False,
     only_to="/", only_from="/", not_from=(),
+    rel_path=None,
 ):
     only_to = parse_path(only_to)
     not_from = tuple(map(parse_path, not_from))
     only_from = parse_path(only_from)
+    if rel_path is not None:
+        rel_path = tuple(rel_path.split("/"))
     
     prev = None
     for log in iter_svnlog(stdin.buffer):
@@ -25,6 +28,17 @@ def main(*,
             show_copies(log.revision, log.paths,
                 only_to=only_to, only_from=only_from, not_from=not_from)
         else:
+            if rel_path is not None:
+                if log.paths is None:
+                    continue
+                for path in log.paths:
+                    if path.path[-len(rel_path):] == rel_path:
+                        match = True
+                        break
+                else:
+                    match = False
+                if not match:
+                    continue
             show_rev(log)
     else:
         assert prev in (None, 1)
@@ -207,11 +221,13 @@ if __name__ == "__main__":
         from_group.add_argument("--only-from", default="/")
         from_group.add_argument("--not-from",
             action="append", default=list())
+        parser.add_argument("--rel-path")
         args = parser.parse_args()
         main(
             starting=args.starting, before=args.before, copies=args.copies,
             only_to=args.only_to,
             only_from=args.only_from, not_from=args.not_from,
+            rel_path=args.rel_path,
         )
     except KeyboardInterrupt:
         signal(SIGINT, SIG_DFL)
