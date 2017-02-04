@@ -8,10 +8,10 @@ from collections import namedtuple
 def main(*,
     starting: dict(type=int, help="minimum revision") = 0,
     before: dict(type=int, help="exclude this and higher revisions") = None,
+    updating: dict(help="only report results that affect this absolute path")
+        = None,
     copies: dict(mutex="mode",
         help="report file copies rather than individual revisions") = False,
-    only_to: dict(help="only report copies to files matching this absolute "
-        "path") = "/",
     only_from: dict(mutex="from", help="only report copies from files "
         "matching this absolute path") = "/",
     not_from: dict(mutex="from",
@@ -21,7 +21,8 @@ def main(*,
     rel_path: dict(help="only include revisions matching this relative path")
         = None,
 ):
-    only_to = parse_path(only_to)
+    if updating is not None:
+        updating = parse_path(updating)
     not_from = tuple(map(parse_path, not_from))
     only_from = parse_path(only_from)
     if rel_path is not None:
@@ -37,7 +38,7 @@ def main(*,
             break
         if copies:
             show_copies(log.revision, log.paths,
-                only_to=only_to, only_from=only_from, not_from=not_from)
+                updating=updating, only_from=only_from, not_from=not_from)
         else:
             if rel_path is not None:
                 if log.paths is None:
@@ -50,11 +51,15 @@ def main(*,
                     match = False
                 if not match:
                     continue
-            show_rev(log, summarize=summarize)
+            show_rev(log, updating=updating, summarize=summarize)
     else:
         assert prev in (None, 1)
 
-def show_rev(log, *, summarize):
+def show_rev(log, *, updating, summarize):
+    if updating is not None and (log.paths is None
+            or not any(p.path[:len(updating)] == updating[:len(p.path)]
+            for p in log.paths)):
+        return
     print("---")
     if log.author is None:
         author = ""
@@ -86,13 +91,14 @@ def show_rev(log, *, summarize):
                 copyfrom = f" (from {from_path}:{path.copyfrom_rev})"
             print(f"   {action} /{'/'.join(path.path)}{copyfrom}")
 
-def show_copies(rev, paths, *, only_to, only_from, not_from):
+def show_copies(rev, paths, *, updating, only_from, not_from):
     if paths is None:
         return
     for path in paths:
         if (
             path.copyfrom_rev is None or
-            path.path[:len(only_to)] != only_to[:len(path.path)]
+            updating is not None
+                and path.path[:len(updating)] != updating[:len(path.path)]
         ):
             continue
         from_path = path.copyfrom_path
