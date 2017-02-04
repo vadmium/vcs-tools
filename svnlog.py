@@ -2,7 +2,9 @@ from __future__ import generator_stop
 
 from sys import stdin
 from datetime import datetime
-from xml.dom import pulldom, minidom
+from xml.parsers import expat
+from xml.etree.ElementTree import TreeBuilder
+from collections import deque
 from collections import namedtuple
 
 def main(*,
@@ -132,82 +134,66 @@ def show_copies(rev, paths, *, updating, only_from, not_from):
         print(copy)
 
 def iter_svnlog(stream):
-    stream = pulldom.parse(stream)
-    [event, node] = next_content(stream)
-    with node:
-        assert event == pulldom.START_DOCUMENT
-    [event, node] = next_content(stream)
-    assert event == pulldom.START_ELEMENT and node.tagName == "log"
-    while True:
-        [event, node] = next_content(stream)
-        if event != pulldom.START_ELEMENT:
-            break
-        assert node.tagName == "logentry"
-        rev = int(node.getAttribute("revision"))
+    parser = _Parser(stream)
+    log = parser.element
+    assert log.tag == "log"
+    for entry in parser:
+        assert entry.tag == "logentry"
+        rev = int(entry.get("revision"))
+        entry = iter(parser)
         
-        [event, node] = next_content(stream)
-        assert event == pulldom.START_ELEMENT
-        if node.tagName == "author":
-            stream.expandNode(node)
-            node.normalize()
-            [node] = node.childNodes
-            assert isinstance(node, minidom.Text)
-            author = node.data
-            [event, node] = next_content(stream)
-            assert event == pulldom.START_ELEMENT
+        next(entry)
+        if parser.element.tag == "author":
+            parser.build_subtree()
+            assert len(parser.element) == 0
+            author = "".join(parser.element.itertext())
+            next(entry)
         else:
             author = None
         
-        assert node.tagName == "date"
-        stream.expandNode(node)
-        node.normalize()
-        [node] = node.childNodes
-        assert isinstance(node, minidom.Text)
-        date = datetime.strptime(node.data, "%Y-%m-%dT%H:%M:%S.%fZ")
+        assert parser.element.tag == "date"
+        parser.build_subtree()
+        assert len(parser.element) == 0
+        date = "".join(parser.element.itertext())
+        date = datetime.strptime(date, "%Y-%m-%dT%H:%M:%S.%fZ")
         
-        [event, node] = next_content(stream)
         # A commit without paths is strange, but possible
-        if event == pulldom.START_ELEMENT:
-            assert node.tagName == "paths"
+        try:
+            next(entry)
+        except StopIteration:
+            paths = None
+        else:
+            assert parser.element.tag == "paths"
             paths = list()
             parents = set()
-            while True:
-                [event, path_node] = next_content(stream)
-                if event != pulldom.START_ELEMENT:
-                    break
-                assert path_node.tagName == "path"
-                stream.expandNode(path_node)
-                path_node.normalize()
-                action = path_node.getAttribute("action")
-                assert action in set("AMRD")
-                is_add = action in set("AR")
-                is_copy = path_node.hasAttribute("copyfrom-rev")
-                assert is_copy == path_node.hasAttribute("copyfrom-path")
+            for path_elem in parser:
+                assert path_elem.tag == "path"
+                parser.build_subtree()
+                action = path_elem.get("action")
+                assert action in frozenset("AMRD")
+                is_add = action in frozenset("AR")
+                is_copy = path_elem.get("copyfrom-rev") is not None
+                assert is_copy \
+                    == (path_elem.get("copyfrom-path") is not None)
                 if is_copy:
                     assert is_add
-                    from_rev = int(path_node.getAttribute("copyfrom-rev"))
+                    from_rev = int(path_elem.get("copyfrom-rev"))
                     assert from_rev < rev
-                    from_path = path_node.getAttribute("copyfrom-path")
+                    from_path = path_elem.get("copyfrom-path")
                     from_path = parse_path(from_path)
                 else:
                     from_rev = None
                     from_path = None
-                [node] = path_node.childNodes
-                assert isinstance(node, minidom.Text)
-                path_split = parse_path(node.data)
+                path_split = parse_path("".join(path_elem.itertext()))
                 assert path_split not in parents
                 for n in range(len(path_split)):
                     parents.add(path_split[:n])
                 parents.add(path_split)
                 paths.append(PathLog(path_split,
-                    is_delete=action in set("DR"), is_add=is_add,
+                    is_delete=action in frozenset("DR"), is_add=is_add,
                     copyfrom_rev=from_rev, copyfrom_path=from_path))
-            assert event == pulldom.END_ELEMENT
-            [event, _] = next_content(stream)
-        else:
-            paths = None
-        assert event == pulldom.END_ELEMENT
         yield Log(rev, author=author, date=date, paths=paths)
+    parser.close()
 
 Log = namedtuple("Log", ("revision", "author", "date", "paths"))
 PathLog = namedtuple("PathLog",
@@ -220,16 +206,86 @@ def parse_path(path):
     assert not path.endswith("/")
     return tuple(path[1:].split("/"))
 
-def next_content(stream):
-    skip = {
-        pulldom.COMMENT, pulldom.CHARACTERS, pulldom.PROCESSING_INSTRUCTION,
-        pulldom.IGNORABLE_WHITESPACE,
-    }
-    while True:
-        result = next(stream)
-        [event, _] = result
-        if event not in skip:
-            return result
+class _Parser:
+    def __init__(self, stream):
+        self._stream = stream
+        self._parser = expat.ParserCreate()
+        self._parser.buffer_text = True
+        self._parser.StartElementHandler = self._on_element_start
+        self._parser.EndElementHandler = self._on_element_end
+        self._parser.CharacterDataHandler = self._on_text
+        self._pending = deque()
+        self._builders = [TreeBuilder()]
+        [method, args] = self._read()
+        self.element = getattr(self._builders[-1], method)(*args)
+    
+    def _on_element_start(self, name, attributes):
+        self._pending.append(("start", (name, attributes)))
+    
+    def _on_element_end(self, name):
+        self._pending.append(("end", (name,)))
+    
+    def _on_text(self, data):
+        self._pending.append(("data", (data,)))
+    
+    def _read(self):
+        while not self._pending:
+            data = self._stream.read(0x10000)
+            if data:
+                self._parser.Parse(data, False)
+            else:
+                self._parser.Parse(data, True)
+                self._parser = None
+        return self._pending.popleft()
+    
+    def __iter__(self):
+        depth = len(self._builders)
+        while True:
+            while len(self._builders) > depth:
+                [method, args] = self._read()
+                if method == "data":
+                    continue
+                assert method == "end"
+                self._builders.pop()
+            [method, args] = self._read()
+            if method == "data":
+                continue
+            if method == "end":
+                break
+            self._builders.append(TreeBuilder())
+            self.element = getattr(self._builders[-1], method)(*args)
+            yield self.element
+        self._builders.pop()
+    
+    def build_subtree(self):
+        builder = self._builders.pop()
+        depth = 0
+        while True:
+            [method, args] = self._read()
+            getattr(builder, method)(*args)
+            if method == "start":
+                depth += 1
+            if method == "end":
+                if depth == 0:
+                    break
+                depth -=1
+        return builder.close()
+    
+    def close(self):
+        while self._builders:
+            [method, args] = self._read()
+            if method == "data":
+                continue
+            assert method == "end"
+            self._builders.pop()
+        while self._parser:
+            data = self._stream.read(0x10000)
+            if data:
+                self._parser.Parse(data, False)
+            else:
+                self._parser.Parse(data, True)
+                self._parser = None
+        return self.element
 
 def common_prefix(a, b):
     max_common = min(len(a), len(b))
