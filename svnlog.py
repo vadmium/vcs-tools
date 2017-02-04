@@ -234,7 +234,7 @@ def common_prefix(a, b):
     return a[:i]
 
 if __name__ == "__main__":
-    from signal import signal, SIGINT, SIG_DFL
+    from signal import signal, SIGINT, SIGPIPE, SIG_DFL
     from os import kill, getpid
     from argparse import ArgumentParser
     from inspect import signature, Parameter
@@ -282,3 +282,6 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         signal(SIGINT, SIG_DFL)
         kill(getpid(), SIGINT)
+    except BrokenPipeError:
+        signal(SIGPIPE, SIG_DFL)
+        kill(getpid(), SIGPIPE)
