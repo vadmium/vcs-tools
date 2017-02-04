@@ -6,12 +6,20 @@ from xml.dom import pulldom, minidom
 from collections import namedtuple
 
 def main(*,
-    starting=0, before: dict(type=int) = None,
-    copies: dict(mutex="mode") = False,
-    summarize: dict(mutex="mode") = False,
-    only_to="/",
-    only_from: dict(mutex="from") = "/", not_from: dict(mutex="from") = (),
-    rel_path=None,
+    starting: dict(type=int, help="minimum revision") = 0,
+    before: dict(type=int, help="exclude this and higher revisions") = None,
+    copies: dict(mutex="mode",
+        help="report file copies rather than individual revisions") = False,
+    only_to: dict(help="only report copies to files matching this absolute "
+        "path") = "/",
+    only_from: dict(mutex="from", help="only report copies from files "
+        "matching this absolute path") = "/",
+    not_from: dict(mutex="from",
+        help="exclude copies from files matching these absolute paths") = (),
+    summarize: dict(mutex="mode", help="report the common path "
+        "rather than reporting each individual file action") = False,
+    rel_path: dict(help="only include revisions matching this relative path")
+        = None,
 ):
     only_to = parse_path(only_to)
     not_from = tuple(map(parse_path, not_from))
