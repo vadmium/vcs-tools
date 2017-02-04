@@ -6,8 +6,11 @@ from xml.dom import pulldom, minidom
 from collections import namedtuple
 
 def main(*,
-    starting=0, before=None, copies=False, summarize=False,
-    only_to="/", only_from="/", not_from=(),
+    starting=0, before: dict(type=int) = None,
+    copies: dict(mutex="mode") = False,
+    summarize: dict(mutex="mode") = False,
+    only_to="/",
+    only_from: dict(mutex="from") = "/", not_from: dict(mutex="from") = (),
     rel_path=None,
 ):
     only_to = parse_path(only_to)
@@ -225,33 +228,49 @@ def common_prefix(a, b):
 if __name__ == "__main__":
     from signal import signal, SIGINT, SIG_DFL
     from os import kill, getpid
+    from argparse import ArgumentParser
+    from inspect import signature, Parameter
+    
     try:
-        from argparse import ArgumentParser
-        
         parser = ArgumentParser()
-        parser.add_argument("--starting", type=int, default=0)
-        parser.add_argument("--before", type=int)
         
-        group = parser.add_mutually_exclusive_group()
-        group.add_argument("--copies", action="store_true")
-        group.add_argument("--summarize", action="store_true")
+        groups = dict()
+        paired = set()
+        for param in signature(main).parameters.values():
+            assert param.kind == Parameter.KEYWORD_ONLY
+            attrs = param.annotation
+            if attrs is Parameter.empty:
+                attrs = dict()
+            default = param.default
+            assert default is not Parameter.empty
+            if default is False:
+                action = "store_true"
+            else:
+                action = "store"
+                if isinstance(default, int):
+                    attrs.setdefault("type", int)
+                elif isinstance(default, (list, tuple, set, frozenset)) \
+                        and not default:
+                    action = "append"
+                    default = list()
+            
+            group_id = attrs.pop("mutex", None)
+            if group_id is None:
+                group = parser
+            else:
+                try:
+                    group = groups[group_id]
+                    paired.add(group_id)
+                except LookupError:
+                    group = parser.add_mutually_exclusive_group()
+                    groups[group_id] = group
+            
+            name = "--" + param.name.replace("_", "-")
+            group.add_argument(name, action=action, default=default, **attrs)
+        assert paired == groups.keys()
         
-        parser.add_argument("--only-to", default="/")
-        
-        from_group = parser.add_mutually_exclusive_group()
-        from_group.add_argument("--only-from", default="/")
-        from_group.add_argument("--not-from",
-            action="append", default=list())
-        
-        parser.add_argument("--rel-path")
         args = parser.parse_args()
-        main(
-            starting=args.starting, before=args.before,
-            copies=args.copies, summarize=args.summarize,
-            only_to=args.only_to,
-            only_from=args.only_from, not_from=args.not_from,
-            rel_path=args.rel_path,
-        )
+        main(**vars(args))
     except KeyboardInterrupt:
         signal(SIGINT, SIG_DFL)
         kill(getpid(), SIGINT)
