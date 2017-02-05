@@ -217,6 +217,7 @@ def parse_path(path):
     if path == "/":
         return ()
     assert path.startswith("/")
+    assert not path.endswith("/")
     return tuple(path[1:].split("/"))
 
 def next_content(stream):
