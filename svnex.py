@@ -1,28 +1,6 @@
 #! /usr/bin/env python3
 
-"""Converts from a remote Subversion repository to Git's "fast-import" format
-
-The program is written to:
-
-* use Subversion's remote access protocol
-* minimise traffic from the Subversion server by
-    * skipping revisions that do not affect the branch
-    * skipping paths that are outside the branch
-    * requesting deltas rather than full copies of files where practical
-    * requesting exclusion of deltas for ignored files
-* follow branch copies
-* produce identical commits to "git-svn", except that it
-    * does not merge new branches and tags with deleted paths
-    * optionally drops commits that are simple branch copies
-* be run incrementally
-* handle Subversion merge tracking information
-
-It does not:
-
-* handle or correlate multiple trunks, branches, or tags
-* handle symbolic links, although it does handle executable files
-* do anything with special Subversion file or revision properties
-"""
+'''See main() function'''
 
 from subvertpy.ra import RemoteAccess
 from subvertpy.delta import apply_txdelta_window
@@ -39,8 +17,6 @@ from io import SEEK_END
 from subvertpy import SubversionException
 from subprocess import Popen
 import subprocess
-import argparse
-from clifunc import splitdoc
 from errno import EPIPE
 from contextlib import contextmanager
 import subvertpy.ra
@@ -53,38 +29,55 @@ from misc import Context
 
 INVALID_REVNUM = -1
 
-def main():
-    (summary, _) = splitdoc(__doc__)
-    parser = argparse.ArgumentParser(description=summary)
-    
-    parser.add_argument("url", metavar="url[@rev]", help="subversion URL")
-    
-    group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument("--file",
-        metavar="FILENAME", help="fast import file")
-    group.add_argument("importer", nargs="*", default=(),
-        help="command to pipe fast import stream to")
-    
-    parser.add_argument("--git-ref", required=True, metavar="REFNAME",
-        help="Git ref name to export to (e.g. refs/remotes/svn/trunk)")
-    parser.add_argument("--rev-map", metavar="FILENAME",
+def main(
+    url: dict(metavar="url[@rev]", help="subversion URL"),
+    importer: dict(mutex_required="output",
+        help="command to pipe fast import stream to") = (),
+    *,
+    file: dict(mutex_required="output",
+        metavar="FILENAME", help="fast import file") = None,
+    git_ref: dict(metavar="REFNAME",
+        help="Git ref name to export to (e.g. refs/remotes/svn/trunk)"),
+    rev_map: dict(metavar="FILENAME",
         help="""file mapping from Subversion paths and revisions
         to existing Git revisions,
-        each line formatted as PATH@SVN-REV (space) GIT-REV""")
-    parser.add_argument("-A", "--authors-file", metavar="FILENAME", help=
+        each line formatted as PATH@SVN-REV (space) GIT-REV""") = None,
+    authors_file: dict(short="-A", metavar="FILENAME", help=
         'file mapping Subversion user names to Git authors, like "git-svn"')
-    parser.add_argument("--rewrite-root",
-        metavar="URL", help="subversion URL to store in the metadata")
-    parser.add_argument("--ignore", action="append", default=list(),
-        metavar="PATH", help="add a path to be excluded from export")
-    parser.add_argument("--export-copies", action="store_true",
-        help="export simple branch copies even when no files were modified")
-    parser.add_argument("-q", "--quiet", action="store_true",
-        help="suppress progress messages")
+        = None,
+    rewrite_root: dict(metavar="URL",
+        help="subversion URL to store in the metadata") = None,
+    ignore: dict(
+        metavar="PATH", help="add a path to be excluded from export") = (),
+    export_copies: dict(help='''export simple branch copies even when no
+        files were modified''') = False,
+    quiet: dict(short="-q", help="suppress progress messages") = False,
+):
+    '''Converts a remote Subversion repository to Git's "fast-import" format
     
-    args = parser.parse_args()
+    The program is written to:
     
-    url = args.url.rsplit("@", 1)
+    * use Subversion's remote access protocol
+    * minimise traffic from the Subversion server by
+        * skipping revisions that do not affect the branch
+        * skipping paths that are outside the branch
+        * requesting deltas rather than full copies of files where practical
+        * requesting exclusion of deltas for ignored files
+    * follow branch copies
+    * produce identical commits to "git-svn", except that it
+        * does not merge new branches and tags with deleted paths
+        * optionally drops commits that are simple branch copies
+    * be run incrementally
+    * handle Subversion merge tracking information
+    
+    It does not:
+    
+    * handle or correlate multiple trunks, branches, or tags
+    * handle symbolic links, although it does handle executable files
+    * do anything with special Subversion file or revision properties
+    '''
+    
+    url = url.rsplit("@", 1)
     if len(url) > 1:
         peg_rev = url.pop()
         if peg_rev:
@@ -95,19 +88,19 @@ def main():
         peg_rev = INVALID_REVNUM
     (url,) = url
     
-    rev_map = defaultdict(dict)
-    if args.rev_map is not None:
-        with open(args.rev_map, "rt") as file:
+    rev_map_data = defaultdict(dict)
+    if rev_map is not None:
+        with open(rev_map, "rt") as file:
             for s in file:
                 (s, gitrev) = s.rstrip("\n").rsplit(" ", 1)
                 (branch, svnrev) = s.rsplit("@", 1)
                 svnrev = int(svnrev)
-                rev_map[branch][svnrev] = gitrev
+                rev_map_data[branch][svnrev] = gitrev
     
-    if args.authors_file is not None:
+    if authors_file is not None:
         author_map = dict()
-        with open(args.authors_file, "rt") as file:
-            for line in file:
+        with open(authors_file, "rt") as f:
+            for line in f:
                 if line.endswith("\n"):
                     line = line[:-1]
                 (svn, git) = line.split(" = ", 1)
@@ -115,21 +108,21 @@ def main():
     else:
         author_map = None
     
-    if args.importer:
-        output = FastExportPipe(args.importer)
+    if importer:
+        output = FastExportPipe(importer)
     else:
-        output = FastExportFile(args.file)
+        output = FastExportFile(file)
     with output:
         try:
             exporter = Exporter(url, output,
-                rev_map=rev_map,
+                rev_map=rev_map_data,
                 author_map=author_map,
-                root=args.rewrite_root,
-                ignore=args.ignore,
-                export_copies=args.export_copies,
-                quiet=args.quiet,
+                root=rewrite_root,
+                ignore=ignore,
+                export_copies=export_copies,
+                quiet=quiet,
             )
-            exporter.export(args.git_ref, rev=peg_rev)
+            exporter.export(git_ref, rev=peg_rev)
         except SubversionException as err:
             (msg, num) = err.args
             raise SystemExit("E{}: {}".format(num, msg))
@@ -795,4 +788,5 @@ def dummycontext(*pos, **kw):
     yield
 
 if __name__ == "__main__":
-    main()
+    from _common import run_cli
+    run_cli(main)
