@@ -74,3 +74,10 @@ def run_cli(main):
     except BrokenPipeError:
         signal(SIGPIPE, SIG_DFL)
         kill(getpid(), SIGPIPE)
+
+def parse_path(path):
+    if path == "/":
+        return ()
+    assert path.startswith("/")
+    assert not path.endswith("/")
+    return tuple(path[1:].split("/"))

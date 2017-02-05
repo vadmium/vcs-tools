@@ -5,6 +5,7 @@ from datetime import datetime
 from xml.etree.ElementTree import XMLParser, TreeBuilder
 from collections import deque
 from collections import namedtuple
+from _common import parse_path
 
 def main(*,
     starting: dict(type=int, help="minimum revision") = 0,
@@ -197,13 +198,6 @@ def iter_svnlog(stream):
 Log = namedtuple("Log", ("revision", "author", "date", "paths"))
 PathLog = namedtuple("PathLog",
     ("path", "is_delete", "is_add", "copyfrom_rev", "copyfrom_path"))
-
-def parse_path(path):
-    if path == "/":
-        return ()
-    assert path.startswith("/")
-    assert not path.endswith("/")
-    return tuple(path[1:].split("/"))
 
 class _Parser:
     def __init__(self, stream, *pos, **kw):
