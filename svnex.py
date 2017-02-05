@@ -193,13 +193,15 @@ class Exporter:
                         commit = src is None
                     
                     if commit:
-                        gitrev = self.commit(svnrev, date, author,
+                        new = self.commit(svnrev, date, author,
                             init_export=init_export,
                             base_rev=base_rev, base_path=base_path,
                             gitrev=gitrev,
                             path=path, prefix=prefix,
                         )
-                        init_export = False
+                        if new:
+                            gitrev = new
+                            init_export = False
                     else:
                         self.log(": no changes")
                         self.output.printf("reset {}", git_ref)
@@ -269,6 +271,23 @@ class Exporter:
         for p in self.ignore:
             reporter.set_path(p, INVALID_REVNUM, True, None,
                 subvertpy.ra.DEPTH_EXCLUDE)
+        
+        root = None
+        for p in self.paths:
+            if p.text.startswith(prefix):
+                break
+            if p.text == path:
+                assert root is None
+                root = p
+        else:
+            if root is not None:
+                attrib = root.attrib
+                kind = attrib.pop("kind")
+                assert kind in {"dir", ""}
+                assert attrib == {"action": "A"}
+                # TODO: what if directory added with properties?
+                self.log(" created root only")
+                return None
         
         merges = list()
         if editor.mergeinfo:
