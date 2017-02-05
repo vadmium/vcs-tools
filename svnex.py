@@ -330,39 +330,36 @@ class Exporter:
 
 class PendingSegments:
     def __init__(self, exporter, branch, rev=None):
-        self.exporter = exporter
-        
         # List of (base, end, path), from youngest to oldest segment.
         # All revisions in each segment need importing.
         self.segments = list()
         
         self.base = (0, "")  # Default if no revisions are already exported
-        get_location_segments(self.exporter, self.on_segment, branch, rev)
-    
-    def on_segment(self, start, end, path):
-        (kstarts, runs) = self.exporter.known_branches.get(path, ((), ()))
-        i = bisect_right(kstarts, end)
-        # Only kstarts[:i] are all <= end. If it exists, kstart[i] > end.
-        
-        if i:
-            # Already imported segment at index i - 1 might overlap
-            run = runs[i - 1]
-            base = kstarts[i - 1] + len(run) - 1  # Last imported revision
-            if base >= start:
-                # Not all revisions in segment are younger than base revision
-                
-                if base < end:
-                    # Part of segment is younger, thus still needs importing
-                    self.segments.append((base, end, path))
-                # else: No part of segment is younger
-                
-                self.base = (base, path)
-                self.git_base = run[-1]
-                raise StopIteration()
-            # else: Entire segment is younger: import all revisions
-        # else: Nothing imported yet
-        
-        self.segments.append((start - 1, end, path))
+        segments = iter_location_segments(exporter, branch, rev)
+        for [start, end, path] in segments:
+            (kstarts, runs) = exporter.known_branches.get(path, ((), ()))
+            i = bisect_right(kstarts, end)
+            # Only kstarts[:i] are all <= end. If it exists, kstart[i] > end.
+            
+            if i:
+                # Already imported segment at index i - 1 might overlap
+                run = runs[i - 1]
+                base = kstarts[i - 1] + len(run) - 1  # Last imported revision
+                if base >= start:
+                    # Not all revisions in segment are younger than base revision
+                    
+                    if base < end:
+                        # Part of segment is younger, thus still needs importing
+                        self.segments.append((base, end, path))
+                    # else: No part of segment is younger
+                    
+                    self.base = (base, path)
+                    self.git_base = run[-1]
+                    return
+                # else: Entire segment is younger: import all revisions
+            # else: Nothing imported yet
+            
+            self.segments.append((start - 1, end, path))
     
     def __iter__(self):
         return reversed(self.segments)
@@ -480,43 +477,38 @@ class Ancestors(RevisionSet):
         
         ranges.insert(i, (start, end, True))
 
-class get_location_segments:
-    def __init__(self, exporter, callback, path="", rev=None):
-        self.exporter = exporter
-        self.callback = callback
-        
-        if rev is None:
-            disprev = ""
+def iter_location_segments(exporter, path="", rev=None):
+    loc = f"/{path}"
+    if rev is not None:
+        loc = f"{loc}@{rev}"
+    with exporter.progress(f"{loc} location history:"):
+        found = None
+        for entry in exporter._svnlog:
+            entry_rev = int(entry.get("revision"))
+            if rev is None:
+                rev = entry_rev
+                loc = f"{loc}@{rev}"
+            if entry_rev > rev:
+                continue
+            paths = entry.find("paths")
+            if paths is None:
+                continue
+            for p in paths:
+                if p.text.lstrip("/") == path:
+                    assert found is None
+                    found = p
+            if found is not None:
+                break
         else:
-            disprev = "@{}".format(rev)
-        msg = "/{}{} location history:".format(path, disprev)
-        with self.exporter.progress(msg):
-            root_len = len(self.exporter.repos_root)
-            prefix = (self.exporter.url + "/")[root_len + 1:]
-            if (path + "/").startswith(prefix):
-                path = path[len(prefix):]
+            if path == "":
+                entry_rev = 0
             else:
-                self.exporter.ra.reparent(self.exporter.repos_root)
-                self.exporter.url = self.exporter.repos_root
-            
-            try:
-                self.cancelled = False
-                self.exporter.ra.get_location_segments(path, rev,
-                    rev, INVALID_REVNUM, self.on_segment)
-            except StopIteration:
-                pass
-    
-    def on_segment(self, start, end, path):
-        if self.cancelled or path is None:
-            return
-        self.exporter.log("\n  /{}:{}-{}".format(path, start, end))
-        try:
-            self.callback(start, end, path)
-        except StopIteration:
-            # Do not actually cancel the Subversion operation,
-            # because its Serf implementation does not handle cancellation
-            # very well
-            self.cancelled = True
+                raise LookupError(f"Location {loc} not found")
+        if found is not None:
+            assert found.get("action") == "A"
+            assert found.get("copyfrom-rev") is None
+        exporter.log("\n  /{}:{}-{}".format(path, entry_rev, rev))
+        yield (entry_rev, rev, path)
 
 class FastExport(Context):
     def __init__(self, *pos, **kw):
