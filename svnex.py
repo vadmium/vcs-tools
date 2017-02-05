@@ -2,35 +2,31 @@
 
 '''See main() function'''
 
-from subvertpy.ra import RemoteAccess
-from subvertpy.delta import apply_txdelta_window
-from subvertpy.properties import (
-    PROP_REVISION_DATE,
-    PROP_REVISION_AUTHOR,
-    PROP_REVISION_LOG,
-    PROP_EXECUTABLE,
-    PROP_MERGEINFO,
-)
-from sys import stderr, exc_info
-from subvertpy.properties import time_from_cstring
+#~ from subvertpy.delta import apply_txdelta_window
+#~ from subvertpy.properties import (
+    #~ PROP_REVISION_DATE,
+    #~ PROP_REVISION_AUTHOR,
+    #~ PROP_REVISION_LOG,
+    #~ PROP_EXECUTABLE,
+    #~ PROP_MERGEINFO,
+#~ )
+from sys import stderr, exc_info, stdin
+#~ from subvertpy.properties import time_from_cstring
 from io import SEEK_END
-from subvertpy import SubversionException
 from subprocess import Popen
 import subprocess
 from errno import EPIPE
 from contextlib import contextmanager
-import subvertpy.ra
 from collections import defaultdict
 from bisect import bisect_right, bisect_left
 from contextlib import closing
-from subvertpy.properties import parse_mergeinfo_property
-from subvertpy.properties import generate_mergeinfo_property
+#~ from subvertpy.properties import parse_mergeinfo_property
+#~ from subvertpy.properties import generate_mergeinfo_property
 from misc import Context
-
-INVALID_REVNUM = -1
+from xml.etree import ElementTree
 
 def main(
-    url: dict(metavar="url[@rev]", help="subversion URL"),
+    branch: dict(metavar="/path[@rev]", help="Subversion branch"),
     importer: dict(mutex_required="output",
         help="command to pipe fast import stream to") = (),
     *,
@@ -53,40 +49,35 @@ def main(
         files were modified''') = False,
     quiet: dict(short="-q", help="suppress progress messages") = False,
 ):
-    '''Converts a remote Subversion repository to Git's "fast-import" format
+    '''Converts a Subversion repository to Git's "fast-import" format
     
-    The program is written to:
+    The program can:
     
-    * use Subversion's remote access protocol
-    * minimise traffic from the Subversion server by
-        * skipping revisions that do not affect the branch
-        * skipping paths that are outside the branch
-        * requesting deltas rather than full copies of files where practical
-        * requesting exclusion of deltas for ignored files
     * follow branch copies
     * produce identical commits to "git-svn", except that it
         * does not merge new branches and tags with deleted paths
         * optionally drops commits that are simple branch copies
-    * be run incrementally
+    * be run incrementally???
     * handle Subversion merge tracking information
     
-    It does not:
+    It does not (yet):
     
     * handle or correlate multiple trunks, branches, or tags
     * handle symbolic links, although it does handle executable files
-    * do anything with special Subversion file or revision properties
+    * do anything else with special Subversion file or revision properties
     '''
     
-    url = url.rsplit("@", 1)
-    if len(url) > 1:
-        peg_rev = url.pop()
+    branch = branch.rsplit("@", 1)
+    if len(branch) > 1:
+        peg_rev = branch.pop()
         if peg_rev:
             peg_rev = int(peg_rev)
         else:
             peg_rev = INVALID_REVNUM
     else:
         peg_rev = INVALID_REVNUM
-    (url,) = url
+    [branch] = branch
+    branch = branch.lstrip("/")
     
     rev_map_data = defaultdict(dict)
     if rev_map is not None:
@@ -113,22 +104,18 @@ def main(
     else:
         output = FastExportFile(file)
     with output:
-        try:
-            exporter = Exporter(url, output,
-                rev_map=rev_map_data,
-                author_map=author_map,
-                root=rewrite_root,
-                ignore=ignore,
-                export_copies=export_copies,
-                quiet=quiet,
-            )
-            exporter.export(git_ref, rev=peg_rev)
-        except SubversionException as err:
-            (msg, num) = err.args
-            raise SystemExit("E{}: {}".format(num, msg))
+        exporter = Exporter(output,
+            rev_map=rev_map_data,
+            author_map=author_map,
+            root=rewrite_root,
+            ignore=ignore,
+            export_copies=export_copies,
+            quiet=quiet,
+        )
+        exporter.export(git_ref, branch, peg_rev)
 
 class Exporter:
-    def __init__(self, url, output,
+    def __init__(self, output,
         rev_map={},
         author_map=None,
         root=None,
@@ -161,32 +148,17 @@ class Exporter:
         else:
             self.progress = progresscontext
         
-        auth = subvertpy.ra.Auth((
-            # Avoids the following error for diffs on local (file:) URLs:
-            # "No provider registered for 'svn.username' credentials"
-            subvertpy.ra.get_username_provider(),
-            
-            # Avoids RemoteAccess() failing for HTTPS URLs with
-            # "Unable to connect to a repository at URL"
-            # and error code 215001 ("No authentication provider available")
-            subvertpy.ra.get_ssl_server_trust_file_provider(),
-        ))
+        with self.progress("loading log:"):
+            self._svnlog = ElementTree.parse(stdin.buffer).getroot()
+            first = self._svnlog[0].get("revision")
+            last = self._svnlog[-1].get("revision")
+            self.log(f" r{first}:{last}")
         
-        with self.progress("connecting to ", url):
-            self.ra = RemoteAccess(url, auth=auth)
-            self.url = url
+        self.root = root
         
-        self.repos_root = self.ra.get_repos_root()
-        if root is None:
-            self.root = self.repos_root
-        else:
-            self.root = root
-        
-        self.uuid = self.ra.get_uuid()
+        #~ self.uuid = self.ra.get_uuid()  # TODO: from svndump
     
-    def export(self, git_ref, branch=None, rev=INVALID_REVNUM):
-        if branch is None:
-            branch = self.url[len(self.repos_root) + 1:]
+    def export(self, git_ref, branch="", rev=None):
         self.git_ref = git_ref
         segments = PendingSegments(self, branch, rev)
         
@@ -357,7 +329,7 @@ class Exporter:
             stderr.flush()
 
 class PendingSegments:
-    def __init__(self, exporter, branch, rev):
+    def __init__(self, exporter, branch, rev=None):
         self.exporter = exporter
         
         # List of (base, end, path), from youngest to oldest segment.
@@ -509,11 +481,11 @@ class Ancestors(RevisionSet):
         ranges.insert(i, (start, end, True))
 
 class get_location_segments:
-    def __init__(self, exporter, callback, path="", rev=INVALID_REVNUM):
+    def __init__(self, exporter, callback, path="", rev=None):
         self.exporter = exporter
         self.callback = callback
         
-        if rev == INVALID_REVNUM:
+        if rev is None:
             disprev = ""
         else:
             disprev = "@{}".format(rev)

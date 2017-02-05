@@ -4,23 +4,16 @@ from unittest import TestCase
 from tempfile import TemporaryDirectory
 import subprocess
 import os.path
-from urllib.request import pathname2url
 import svnex
 from subprocess import Popen
-from subvertpy.properties import (
-    PROP_REVISION_DATE,
-    PROP_REVISION_AUTHOR,
-    PROP_REVISION_LOG,
-    PROP_EXECUTABLE, PROP_EXECUTABLE_VALUE,
-)
 from email.message import Message
-from io import BytesIO
+from io import BytesIO, TextIOWrapper
 from email.generator import BytesGenerator
-import subvertpy.delta, subvertpy.repos
+#~ import subvertpy.delta
 from functools import partial
-from streams import dummywriter
 from unittest.mock import patch
 import sys
+from xml.sax import saxutils
 
 class TempDirTest(TestCase):
     def setUp(self):
@@ -39,8 +32,8 @@ class RepoTests(TempDirTest):
         
         for (i, rev) in enumerate(revs, 1):
             props = {
-                PROP_REVISION_DATE: "1970-01-01T00:00:00.000000Z",
-                PROP_REVISION_LOG: "",
+                "svn:date": "1970-01-01T00:00:00.000000Z",
+                "svn:log": "",
             }
             props.update(rev.get("props", ()))
             headers = (("Revision-number", format(i)),)
@@ -57,27 +50,31 @@ class RepoTests(TempDirTest):
                         headers.append(("Node-" + name, format(value)))
                 dump_message(dump, headers,
                     props=node.get("props"), content=node.get("content"))
-        
         dump.seek(0)
-        path = os.path.join(self.dir, "repos")
-        repos = subvertpy.repos.create(path)
-        repos.load_fs(dump, feedback_stream=dummywriter,
-            uuid_action=subvertpy.repos.LOAD_UUID_DEFAULT)
-        return path
+        
+        log = TextIOWrapper(BytesIO(), "ascii")
+        log.write("<log>")
+        for [i, rev] in enumerate(reversed(revs)):
+            i = format(len(revs) - i)
+            log.write(f"<logentry revision={saxutils.quoteattr(i)}>")
+            log.write("</logentry>")
+        log.write("</log>")
+        log.seek(0)
+        
+        return (dump, patch("svnex.stdin", log))
     
     def test_modify_branch(self):
         """Modification of branch directory properties"""
-        repo = self.make_repo((
+        [dump, log] = self.make_repo((
             dict(nodes=(dict(action="add", path="trunk", kind="dir"),)),
             dict(nodes=(
                 dict(action="change", path="trunk", props={"name": "value"}),
             )),
         ))
-        url = "file://{}/trunk".format(pathname2url(repo))
         output = os.path.join(self.dir, "output")
-        with svnex.FastExportFile(output) as fex:
-            exporter = svnex.Exporter(url, fex, root="", quiet=True)
-            exporter.export("refs/ref")
+        with svnex.FastExportFile(output) as fex, log:
+            exporter = svnex.Exporter(fex, root="", quiet=True)
+            exporter.export("refs/ref", "trunk")
         with open(output, "r", encoding="ascii") as output:
             self.assertMultiLineEqual("""\
 commit refs/ref
@@ -103,22 +100,21 @@ git-svn-id: /trunk@2 00000000-0000-0000-0000-000000000000
     
     def test_authors(self):
         """Authors mapping"""
-        repo = self.make_repo((
-            dict(props={PROP_REVISION_AUTHOR: "user"}, nodes=(
+        [dump, log] = self.make_repo((
+            dict(props={"svn:author": "user"}, nodes=(
                 dict(action="add", path="file", kind="file", content=b""),
             )),
         ))
-        url = "file://{}".format(pathname2url(repo))
         output = os.path.join(self.dir, "output")
         authors = {"user": "user <user>"}
-        with svnex.FastExportFile(output) as output:
-            exporter = svnex.Exporter(url, output,
+        with svnex.FastExportFile(output) as output, log:
+            exporter = svnex.Exporter(output,
                 author_map=authors, quiet=True)
             exporter.export("refs/ref")
     
     def test_first_delete(self):
         """Detection of deletion in first commit"""
-        repo = self.make_repo((
+        [dump, log] = self.make_repo((
             dict(nodes=(
                 dict(action="add", path="file", kind="file", content=b""),
                 dict(action="add", path="igfile", kind="file", content=b""),
@@ -132,10 +128,9 @@ git-svn-id: /trunk@2 00000000-0000-0000-0000-000000000000
                 dict(action="delete", path="igdir/file"),
             )),
         ))
-        url = "file://{}".format(pathname2url(repo))
         output = os.path.join(self.dir, "output")
-        with svnex.FastExportFile(output) as fex:
-            exporter = svnex.Exporter(url, fex, root="",
+        with svnex.FastExportFile(output) as fex, log:
+            exporter = svnex.Exporter(fex, root="",
                 rev_map={"": {1: "refs/ref"}}, ignore=("igfile", "igdir"),
                 quiet=True)
             exporter.export("refs/ref")
@@ -157,7 +152,7 @@ D file
     
     def test_multiple(self):
         """Modification of multiple files"""
-        repo = self.make_repo((
+        [dump, log] = self.make_repo((
             dict(nodes=(
                 dict(action="add", path="file1", kind="file", content=b""),
                 dict(action="add", path="file2", kind="file", content=b""),
@@ -167,13 +162,12 @@ D file
                 dict(action="change", path="file2", content=b"mod 2\n"),
             )),
         ))
-        url = "file://{}".format(pathname2url(repo))
         git = os.path.join(self.dir, "git")
         subprocess.check_call(("git", "init", "--quiet", "--", git))
         script = 'cd "$1" && git fast-import --quiet'
         importer = ("sh", "-c", script, "--", git)
-        with svnex.FastExportPipe(importer) as importer:
-            exporter = svnex.Exporter(url, importer, root="", quiet=True)
+        with svnex.FastExportPipe(importer) as importer, log:
+            exporter = svnex.Exporter(importer, root="", quiet=True)
             exporter.export("refs/heads/master")
         cmd = ("git", "rev-parse", "--verify", "refs/heads/master")
         rev = subprocess.check_output(cmd, cwd=git).decode("ascii").strip()
@@ -183,8 +177,10 @@ D file
         """Order of setting file mode and contents should not matter"""
         with patch("svnex.RemoteAccess", ExecutableRa):
             output = os.path.join(self.dir, "output")
-            with svnex.FastExportFile(output) as fex:
-                exporter = svnex.Exporter("file:///repo", fex, quiet=True)
+            stdin = BytesIO(b'<log><logentry revision="100"/></log>')
+            with svnex.FastExportFile(output) as fex, \
+                    patch("svnex.stdin", TextIOWrapper(stdin, "ascii")):
+                exporter = svnex.Exporter(fex, quiet=True)
                 exporter.export("refs/ref")
             with open(output, "r", encoding="ascii") as output:
                 self.assertMultiLineEqual("""\
@@ -233,7 +229,7 @@ M 755 :2 file2
     
     def test_export_copies(self):
         """Test the "--export-copies" mode"""
-        repo = self.make_repo((
+        [dump, log] = self.make_repo((
             dict(nodes=(
                 dict(action="add", path="trunk", kind="dir"),
                 dict(action="add", path="trunk/file", kind="file",
@@ -244,12 +240,11 @@ M 755 :2 file2
             dict(nodes=(dict(action="change", path="branch/file",
                 content=b"mod\n"),)),
         ))
-        url = "file://{}/branch".format(pathname2url(repo))
         output = os.path.join(self.dir, "output")
-        with svnex.FastExportFile(output) as fex:
-            exporter = svnex.Exporter(url, fex, root="",
+        with svnex.FastExportFile(output) as fex, log:
+            exporter = svnex.Exporter(fex, root="",
                 export_copies=True, quiet=True)
-            exporter.export("refs/branch")
+            exporter.export("refs/branch", "branch")
         with open(output, "r", encoding="ascii") as output:
             self.assertMultiLineEqual("""\
 blob
@@ -295,7 +290,7 @@ M 644 :1 file
     
     def test_branch_no_commit(self):
         """Test branching when no commits are involved"""
-        repo = self.make_repo((
+        [dump, log] = self.make_repo((
             dict(nodes=(
                 dict(action="add", path="trunk", kind="dir"),
                 dict(action="add", path="branches", kind="dir"),
@@ -307,13 +302,12 @@ M 644 :1 file
                     copyfrom_path="trunk", copyfrom_rev=1),
             )),
         ))
-        url = "file://{}/branches/branch".format(pathname2url(repo))
         output = os.path.join(self.dir, "output")
-        with svnex.FastExportFile(output) as fex:
+        with svnex.FastExportFile(output) as fex, log:
             rev_map = {"trunk": {1: "trunk"}}
-            exporter = svnex.Exporter(url, fex, root="", rev_map=rev_map,
+            exporter = svnex.Exporter(fex, root="", rev_map=rev_map,
                 quiet=True)
-            exporter.export("refs/heads/branch")
+            exporter.export("refs/heads/branch", "branches/branch")
         with open(output, "r", encoding="ascii") as output:
             self.assertMultiLineEqual("""\
 reset refs/heads/branch
@@ -323,7 +317,7 @@ from trunk
     
     def test_merge(self):
         """Test a merge followed by a normal commit"""
-        repo = self.make_repo((
+        [dump, log] = self.make_repo((
             dict(nodes=(
                 dict(action="add", path="trunk", kind="dir"),
                 dict(action="add", path="trunk/file", kind="file",
@@ -346,11 +340,10 @@ from trunk
                     content=b"normal\n"),
             )),
         ))
-        url = "file://{}/trunk".format(pathname2url(repo))
         output = os.path.join(self.dir, "output")
-        with svnex.FastExportFile(output) as fex:
-            exporter = svnex.Exporter(url, fex, root="", quiet=True)
-            exporter.export("refs/trunk")
+        with svnex.FastExportFile(output) as fex, log:
+            exporter = svnex.Exporter(fex, root="", quiet=True)
+            exporter.export("refs/trunk", "trunk")
         with open(output, "r", encoding="ascii") as output:
             self.assertMultiLineEqual("""\
 blob
@@ -421,7 +414,7 @@ M 644 :1 file
     
     def test_first_mergeinfo(self):
         """Handling of mergeinfo in first exported commit"""
-        repo = self.make_repo((
+        [dump, log] = self.make_repo((
             dict(nodes=(
                 dict(action="add", path="trunk", kind="dir"),
                 dict(action="add", path="trunk/file", kind="file",
@@ -443,12 +436,11 @@ M 644 :1 file
                 dict(action="change", path="trunk/file", content=b"new\n"),
             )),
         ))
-        url = "file://{}/trunk".format(pathname2url(repo))
         output = os.path.join(self.dir, "output")
-        with svnex.FastExportFile(output) as fex:
-            exporter = svnex.Exporter(url, fex, root="",
+        with svnex.FastExportFile(output) as fex, log:
+            exporter = svnex.Exporter(fex, root="",
                 rev_map={"/trunk": {3: "refs/trunk"}}, quiet=True)
-            exporter.export("refs/trunk")
+            exporter.export("refs/trunk", "trunk")
         with open(output, "r", encoding="ascii") as output:
             self.assertMultiLineEqual("""\
 blob
@@ -472,7 +464,7 @@ M 644 :1 file
     
     def test_first_branch(self):
         """Handling of branch copy as first exported commit"""
-        repo = self.make_repo((
+        [dump, log] = self.make_repo((
             dict(nodes=(
                 dict(action="add", path="trunk", kind="dir"),
                 dict(action="add", path="branches", kind="dir"),
@@ -488,13 +480,12 @@ M 644 :1 file
                     content=b"branched\n"),
             )),
         ))
-        url = "file://{}/branch".format(pathname2url(repo))
         output = os.path.join(self.dir, "output")
-        with svnex.FastExportFile(output) as fex:
+        with svnex.FastExportFile(output) as fex, log:
             rev_map = {"trunk": {1: "trunk"}}
-            exporter = svnex.Exporter(url, fex, root="", rev_map=rev_map,
+            exporter = svnex.Exporter(fex, root="", rev_map=rev_map,
                 quiet=True)
-            exporter.export("refs/branch")
+            exporter.export("refs/branch", "branch")
         with open(output, "r", encoding="ascii") as output:
             self.assertMultiLineEqual("""\
 reset refs/branch
@@ -524,11 +515,11 @@ def executable_add(editor):
     file = root.add_file("file1")
     delta = file.apply_textdelta(None)
     subvertpy.delta.send_stream(BytesIO(b""), delta)
-    file.change_prop(PROP_EXECUTABLE, PROP_EXECUTABLE_VALUE)
+    file.change_prop("svn:executable", "*")
     file.close()
     
     file = root.add_file("file2")
-    file.change_prop(PROP_EXECUTABLE, PROP_EXECUTABLE_VALUE)
+    file.change_prop("svn:executable", "*")
     delta = file.apply_textdelta(None)
     subvertpy.delta.send_stream(BytesIO(b""), delta)
     file.close()
@@ -564,8 +555,8 @@ class ExecutableRa:
         ),
     )
     revprops = {
-        PROP_REVISION_DATE: "1970-01-01T00:00:00.000000Z",
-        PROP_REVISION_LOG: "",
+        "svn:date": "1970-01-01T00:00:00.000000Z",
+        "svn:log": "",
     }
     
     def __init__(self, url, *pos, **kw):
@@ -617,8 +608,10 @@ class TestAuthorsFile(TempDirTest):
             )
         
         output = os.path.join(self.dir, "output")
-        with patch("svnex.Exporter", self.Exporter):
-            svnex.main("file:///dummy",
+        stdin = BytesIO(b'<log><logentry revision="100"/></log>')
+        with patch("svnex.Exporter", self.Exporter), \
+                patch("svnex.stdin", TextIOWrapper(stdin, "ascii")):
+            svnex.main("dummy",
                 file=output, git_ref="refs/ref", authors_file=authors)
         
         self.assertEqual(dict(
