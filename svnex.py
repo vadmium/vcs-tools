@@ -4,9 +4,6 @@
 
 #~ from subvertpy.delta import apply_txdelta_window
 #~ from subvertpy.properties import (
-    #~ PROP_REVISION_DATE,
-    #~ PROP_REVISION_AUTHOR,
-    #~ PROP_REVISION_LOG,
     #~ PROP_EXECUTABLE,
     #~ PROP_MERGEINFO,
 #~ )
@@ -24,6 +21,7 @@ from contextlib import closing
 #~ from subvertpy.properties import generate_mergeinfo_property
 from misc import Context
 from xml.etree import ElementTree
+from _common import parse_path
 
 def main(
     branch: dict(metavar="/path[@rev]", help="Subversion branch"),
@@ -162,13 +160,6 @@ class Exporter:
         self.git_ref = git_ref
         segments = PendingSegments(self, branch, rev)
         
-        # Not using RemoteAccess.get_file_revs() because it does not work on
-        # directories
-        
-        # TODO: Use RemoteAccess.replay_range() for initial location segment
-        # and trailing parts of subsequent segments. Would require
-        # remembering all versions of files received.
-        
         (base_rev, base_path) = segments.base
         if base_rev:
             gitrev = segments.git_base
@@ -179,9 +170,8 @@ class Exporter:
         for (base, end, path) in segments:
             path = "/" + path
             prefix = path.rstrip("/") + "/"
-            url = (self.repos_root + path).rstrip("/")
             with iter_revs(self, path, base, end) as revs:
-                for (svnrev, date, author, log, self.paths) in revs:
+                for (svnrev, date, author, self.paths) in revs:
                     commit = self.export_copies
                     
                     # Assuming we are only interested in "trunk":
@@ -197,7 +187,7 @@ class Exporter:
                         commit = src is None
                     
                     if commit:
-                        gitrev = self.commit(svnrev, date, author, log,
+                        gitrev = self.commit(svnrev, date, author,
                             init_export=init_export,
                             base_rev=base_rev, base_path=base_path,
                             gitrev=gitrev,
@@ -224,7 +214,7 @@ class Exporter:
         
         return gitrev
     
-    def commit(self, rev, date, author, log, *,
+    def commit(self, rev, date, author, *,
     init_export, base_rev, base_path, gitrev, path, prefix, url):
         if not init_export and base_path != path[1:]:
             # Base revision is at a different branch location.
@@ -372,52 +362,42 @@ class PendingSegments:
 def iter_revs(*pos, **kw):
     return closing(iter(ExportRevs(*pos, **kw)))
 
-class ExportRevs:
-    def __init__(self, exporter, path, base, end):
-        self.exporter = exporter
-        self.path = path
-        self.prefix = self.path.rstrip("/") + "/"
-        self.url = (self.exporter.repos_root + self.path).rstrip("/")
-        self.rev = max(base, 0)
-        self.end = end
+def ExportRevs(exporter, path, base, end):
+    prefix = path.rstrip("/") + "/"
+    rev = max(base, 0)
     
-    def __iter__(self):
-        """
-        Always ensures the RA object is parented at the branch location of
-        interest before yielding."""
-        
-        while self.rev < self.end:
-            with self.exporter.progress(self.path):
-                if self.exporter.url != self.url:
-                    self.exporter.ra.reparent(self.url)
-                    self.exporter.url = self.url
-                
-                self.exporter.log("@")
-                next = self.rev + 1
-                self.rev = None
-                self.exporter.ra.get_log(self.on_revision,
-                    strict_node_history=False, paths=None,
-                    start=next, end=self.end, limit=1,
-                    
-                    # TODO: Changed paths only needed for the first revision
-                    # in each segment
-                    discover_changed_paths=True,
-                )
-                
-                if self.rev is None:
-                    self.exporter.log("(none)")
+    path_tuple = parse_path(path)
+    entries = reversed(exporter._svnlog)
+    while rev < end:
+        with exporter.progress(path):
+            exporter.log("@")
+            next = rev + 1
+            found = False
+            for entry in entries:
+                rev = int(entry.get("revision"))
+                if rev < next:
+                    continue
+                paths = entry.find("paths")
+                if paths is None:
+                    continue
+                if rev > end:
                     break
-                self.exporter.log(format(self.rev))
-                
-                yield (self.rev, self.date, self.author, self.log,
-                    self.paths)
-    
-    def on_revision(self, paths, rev, props, children=False):
-        self.paths = paths
-        self.rev = rev
-        self.date = props[PROP_REVISION_DATE]
-        self.author = props.get(PROP_REVISION_AUTHOR, "(no author)")
-        self.log = props[PROP_REVISION_LOG]
+                if any(parse_path(p.text)[:len(path_tuple)] == path_tuple
+                        for p in paths):
+                    found = True
+                    break
+            
+            if not found:
+                exporter.log("(none)")
+                break
+            exporter.log(format(rev))
+            
+            author = entry.find("author")
+            if author is None:
+                author = "(no author)"
+            else:
+                author = author.text
+            yield (rev, entry.find("date").text, author, paths)
 
 class RevisionSet:
     def __init__(self):

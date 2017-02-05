@@ -35,11 +35,11 @@ class RepoTests(TempDirTest):
                 "svn:date": "1970-01-01T00:00:00.000000Z",
                 "svn:log": "",
             }
-            props.update(rev.get("props", ()))
+            props.update(rev.setdefault("props", dict()))
             headers = (("Revision-number", format(i)),)
             dump_message(dump, headers, props=props)
             
-            for node in rev.get("nodes", {}):
+            for node in rev.setdefault("nodes", {}):
                 headers = list()
                 for name in (
                     "action", "kind", "path",
@@ -57,7 +57,14 @@ class RepoTests(TempDirTest):
         for [i, rev] in enumerate(reversed(revs)):
             i = format(len(revs) - i)
             log.write(f"<logentry revision={saxutils.quoteattr(i)}>")
-            log.write("</logentry>")
+            author = rev["props"].get("svn:author")
+            if author is not None:
+                log.write(f"<author>{saxutils.escape(author)}</author>")
+            log.write("<date>1970-01-01T00:00:00.000000Z</date><paths>")
+            for node in rev["nodes"]:
+                action = {"add": "A", "change": "M", "delete": "D"}[node['action']]
+                log.write(f"<path action={saxutils.quoteattr(action)}>/{saxutils.escape(node['path'])}</path>")
+            log.write("</paths></logentry>")
         log.write("</log>")
         log.seek(0)
         
