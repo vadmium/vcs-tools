@@ -2,8 +2,7 @@ from __future__ import generator_stop
 
 from sys import stdin
 from datetime import datetime
-from xml.parsers import expat
-from xml.etree.ElementTree import TreeBuilder
+from xml.etree.ElementTree import XMLParser, TreeBuilder
 from collections import deque
 from collections import namedtuple
 
@@ -207,34 +206,22 @@ def parse_path(path):
     return tuple(path[1:].split("/"))
 
 class _Parser:
-    def __init__(self, stream):
+    def __init__(self, stream, *pos, **kw):
         self._stream = stream
-        self._parser = expat.ParserCreate()
-        self._parser.buffer_text = True
-        self._parser.StartElementHandler = self._on_element_start
-        self._parser.EndElementHandler = self._on_element_end
-        self._parser.CharacterDataHandler = self._on_text
         self._pending = deque()
+        builder = _QueueBuilder(self._pending)
+        self._parser = XMLParser(*pos, target=builder, **kw)
         self._builders = [TreeBuilder()]
-        [method, args] = self._read()
-        self.element = getattr(self._builders[-1], method)(*args)
-    
-    def _on_element_start(self, name, attributes):
-        self._pending.append(("start", (name, attributes)))
-    
-    def _on_element_end(self, name):
-        self._pending.append(("end", (name,)))
-    
-    def _on_text(self, data):
-        self._pending.append(("data", (data,)))
+        [method, pos, kw] = self._read()
+        self.element = getattr(self._builders[-1], method)(*pos, **kw)
     
     def _read(self):
         while not self._pending:
             data = self._stream.read(0x10000)
             if data:
-                self._parser.Parse(data, False)
+                self._parser.feed(data)
             else:
-                self._parser.Parse(data, True)
+                self._parser.close()
                 self._parser = None
         return self._pending.popleft()
     
@@ -242,18 +229,18 @@ class _Parser:
         depth = len(self._builders)
         while True:
             while len(self._builders) > depth:
-                [method, args] = self._read()
+                [method, pos, kw] = self._read()
                 if method == "data":
                     continue
                 assert method == "end"
                 self._builders.pop()
-            [method, args] = self._read()
+            [method, pos, kw] = self._read()
             if method == "data":
                 continue
             if method == "end":
                 break
             self._builders.append(TreeBuilder())
-            self.element = getattr(self._builders[-1], method)(*args)
+            self.element = getattr(self._builders[-1], method)(*pos, **kw)
             yield self.element
         self._builders.pop()
     
@@ -261,8 +248,8 @@ class _Parser:
         builder = self._builders.pop()
         depth = 0
         while True:
-            [method, args] = self._read()
-            getattr(builder, method)(*args)
+            [method, pos, kw] = self._read()
+            getattr(builder, method)(*pos, **kw)
             if method == "start":
                 depth += 1
             if method == "end":
@@ -273,7 +260,7 @@ class _Parser:
     
     def close(self):
         while self._builders:
-            [method, args] = self._read()
+            [method, pos, kw] = self._read()
             if method == "data":
                 continue
             assert method == "end"
@@ -281,11 +268,27 @@ class _Parser:
         while self._parser:
             data = self._stream.read(0x10000)
             if data:
-                self._parser.Parse(data, False)
+                self._parser.feed(data)
             else:
-                self._parser.Parse(data, True)
+                self._parser.close()
                 self._parser = None
         return self.element
+
+class _QueueBuilder:
+    def close(self):
+        pass
+    
+    def __init__(self, queue):
+        self._queue = queue
+    
+    def start(self, *pos, **kw):
+        self._queue.append(("start", pos, kw))
+    
+    def end(self, *pos, **kw):
+        self._queue.append(("end", pos, kw))
+    
+    def data(self, *pos, **kw):
+        self._queue.append(("data", pos, kw))
 
 def common_prefix(a, b):
     max_common = min(len(a), len(b))
