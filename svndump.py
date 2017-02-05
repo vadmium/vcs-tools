@@ -5,7 +5,7 @@ from sys import stdin, stdout
 from contextlib import ExitStack
 import email.message, email.generator
 from warnings import warn
-from _common import read_message_header
+from _common import read_record
 
 def main(
     *inputs:
@@ -42,7 +42,7 @@ def main(
         
         out_version = None
         for dump in dumps:
-            record = read_message_header(dump["stream"])
+            [record, content] = read_record(dump["stream"])
             [version] = record.get_all("SVN-fs-dump-format-version", ())
             dump["version"] = int(version)
             if out_version is None:
@@ -56,25 +56,22 @@ def main(
         out_record = None
         end = False
         for dump in dumps:
-            record = read_message_header(dump["stream"])
-            if record:
+            try:
+                [record, content] = read_record(dump["stream"])
                 uuid = record.get_all("UUID", ())
-            if record and uuid:
-                if dump["version"] < 2:
-                    warn(f"{dump['stream'].name}: UUID record only "
-                        "expected in version >= 2")
-                [uuid] = uuid
-                if out_uuid is None:
-                    out_uuid = uuid
-                elif out_uuid != uuid:
-                    warn(f"{dump['stream'].name}: Conflicting UUID {uuid}; "
-                        f"expected {out_uuid}")
-                record = read_message_header(dump["stream"])
+                if uuid:
+                    if dump["version"] < 2:
+                        warn(f"{dump['stream'].name}: UUID record only "
+                            "expected in version >= 2")
+                    [uuid] = uuid
+                    if out_uuid is None:
+                        out_uuid = uuid
+                    elif out_uuid != uuid:
+                        warn(f"{dump['stream'].name}: Conflicting UUID {uuid}; "
+                            f"expected {out_uuid}")
+                    [record, content] = read_record(dump["stream"])
             
-            if record is None:
-                end = True
-            else:
-                content = dump["stream"].read(int(record["Content-length"]))
+                assert content is not None
                 if out_record is None:
                     out_record = record
                     out_content = content
@@ -92,6 +89,8 @@ def main(
                     out_record = new_record
                     if content != out_content:
                         warn(f"{dump['stream'].name}: Conflicting content")
+            except EOFError:
+                end = True
         
         if out_uuid is not None and out_version >= 2:
             write_message_fields(stdout.buffer, (("UUID", out_uuid),))

@@ -92,14 +92,25 @@ def parse_path(path):
     assert not path.endswith("/")
     return tuple(path[1:].split("/"))
 
-def read_message_header(stream):
+def read_record(stream):
     parser = email.parser.BytesFeedParser()
     while True:
         line = stream.readline()
+        if not line:
+            raise EOFError()
+        assert line.endswith(b"\n")
         parser.feed(line)
         if not line.rstrip(b"\r\n"):
             break
     message = parser.close()
     for defect in message.defects:
-        warn(f"{stream.name}: {defect!r}\n")
-    return message
+        warn(f"{stream.name}: {defect!r}")
+    
+    length = message.get_all("Content-length")
+    if not length:
+        return (message, None)
+    [length] = length
+    length = int(length)
+    content = stream.read(length)
+    assert len(content) == length
+    return (message, content)

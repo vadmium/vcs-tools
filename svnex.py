@@ -8,7 +8,6 @@
     #~ PROP_MERGEINFO,
 #~ )
 from sys import stderr, exc_info, stdin
-#~ from subvertpy.properties import time_from_cstring
 from io import SEEK_END
 from subprocess import Popen
 import subprocess
@@ -21,9 +20,11 @@ from contextlib import closing
 #~ from subvertpy.properties import generate_mergeinfo_property
 from misc import Context
 from xml.etree import ElementTree
-from _common import parse_path
+from _common import parse_path, read_record
+from datetime import datetime, timezone
 
 def main(
+    dump: dict(help="Subversion dump filename"),
     branch: dict(metavar="/path[@rev]", help="Subversion branch"),
     importer: dict(mutex_required="output",
         help="command to pipe fast import stream to") = (),
@@ -40,7 +41,7 @@ def main(
         'file mapping Subversion user names to Git authors, like "git-svn"')
         = None,
     rewrite_root: dict(metavar="URL",
-        help="subversion URL to store in the metadata") = None,
+        help="Subversion URL to store in the metadata") = "",
     ignore: dict(
         metavar="PATH", help="add a path to be excluded from export") = (),
     export_copies: dict(help='''export simple branch copies even when no
@@ -101,8 +102,8 @@ def main(
         output = FastExportPipe(importer)
     else:
         output = FastExportFile(file)
-    with output:
-        exporter = Exporter(output,
+    with output, open(dump, "rb") as dump:
+        exporter = Exporter(dump, output,
             rev_map=rev_map_data,
             author_map=author_map,
             root=rewrite_root,
@@ -113,10 +114,10 @@ def main(
         exporter.export(git_ref, branch, peg_rev)
 
 class Exporter:
-    def __init__(self, output,
+    def __init__(self, dump, output,
         rev_map={},
         author_map=None,
-        root=None,
+        root="",
         ignore=(),
         export_copies=False,
         quiet=False,
@@ -154,7 +155,12 @@ class Exporter:
         
         self.root = root
         
-        #~ self.uuid = self.ra.get_uuid()  # TODO: from svndump
+        self.dump = dump
+        [header, content] = read_record(dump)
+        assert header.keys() == ["SVN-fs-dump-format-version"]
+        [header, content] = read_record(dump)
+        [[field, self.uuid]] = header.items()
+        assert field == "UUID"
     
     def export(self, git_ref, branch="", rev=None):
         self.git_ref = git_ref
@@ -191,7 +197,7 @@ class Exporter:
                             init_export=init_export,
                             base_rev=base_rev, base_path=base_path,
                             gitrev=gitrev,
-                            path=path, prefix=prefix, url=url,
+                            path=path, prefix=prefix,
                         )
                         init_export = False
                     else:
@@ -215,46 +221,54 @@ class Exporter:
         return gitrev
     
     def commit(self, rev, date, author, *,
-    init_export, base_rev, base_path, gitrev, path, prefix, url):
-        if not init_export and base_path != path[1:]:
-            # Base revision is at a different branch location.
-            # Will have to diff the base location against the
-            # current location. Have to switch root because the
-            # diff reporter does not accept link_path() on the
-            # top-level directory.
-            self.url = self.repos_root + "/" + base_path
-            self.url = self.url.rstrip("/")
-            self.ra.reparent(self.url)
-        
+    init_export, base_rev, base_path, gitrev, path, prefix):
         self.log(":")
         editor = RevEditor(self.output, self.quiet)
         
-        # Diff editor does not convey deletions when starting
-        # from scratch
-        if init_export:
-            dir = DirEditor(editor)
-            for (file, (action, _, _)) in self.paths.items():
-                if not file.startswith(prefix) or action not in "DR":
-                    continue
-                file = file[len(prefix):]
-                for p in self.ignore:
-                    if file == p or file.startswith((p + "/").lstrip("/")):
-                        break
-                else:
-                    dir.delete_entry(file)
+        dir = DirEditor(editor)
+        for (file, (action, _, _)) in self.paths.items():
+            if not file.startswith(prefix) or action not in "DR":
+                continue
+            file = file[len(prefix):]
+            for p in self.ignore:
+                if file == p or file.startswith((p + "/").lstrip("/")):
+                    break
+            else:
+                dir.delete_entry(file)
         
-        reporter = self.ra.do_diff(rev, "", url, editor, True, True, True)
-        if init_export:
-            reporter.set_path("", rev, True)
+        while True:
+            [header, revprops] = read_record(self.dump)
+            # Tolerate concatenated dumps
+            if header.items() == [("SVN-fs-dump-format-version", "3")]:
+                [header, content] = read_record(self.dump)
+                assert header.items() == [("UUID", self.uuid)]
+                [header, revprops] = read_record(self.dump)
+            if "Node-path" in header:
+                line = self.dump.readline()
+                assert line == b"\n"
+                continue
+            if int(header["Revision-number"]) == rev:
+                break
         else:
-            reporter.set_path("", base_rev, False)
+            raise LookupError(f"Revision {rev} not found in dump file")
+        while True:
+            if not revprops.startswith(b"K "):
+                break
+            [length, revprops] = revprops[2:].split(b"\n", 1)
+            length = int(length)
+            name = revprops[:length]
+            assert revprops.startswith(b"\nV ", length)
+            [length, revprops] = revprops[length + 3:].split(b"\n", 1)
+            length = int(length)
+            if name == b"svn:log":
+                log = revprops[:length].decode("ascii")
+            assert revprops.startswith(b"\n", length)
+            revprops = revprops[length + 1:]
+        assert revprops == b"PROPS-END\n"
         
         for p in self.ignore:
             reporter.set_path(p, INVALID_REVNUM, True, None,
                 subvertpy.ra.DEPTH_EXCLUDE)
-        
-        reporter.finish()
-        # Assume the editor calls are all completed now
         
         merges = list()
         if editor.mergeinfo:
@@ -285,7 +299,8 @@ class Exporter:
         mark = self.output.newmark()
         self.output.printf("mark {}", mark)
         
-        date = time_from_cstring(date) // 10**6
+        date = datetime.strptime(date, "%Y-%m-%dT%H:%M:%S.%fZ")
+        date = int(date.replace(tzinfo=timezone.utc).timestamp())
         
         if self.author_map is None:
             author = "{author} <{author}@{uuid}>".format(
