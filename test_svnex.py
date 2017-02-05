@@ -80,7 +80,7 @@ class RepoTests(TempDirTest):
         ))
         output = os.path.join(self.dir, "output")
         with svnex.FastExportFile(output) as fex, log:
-            exporter = svnex.Exporter(dump, fex, root="", quiet=True)
+            exporter = svnex.Exporter(dump, fex, root="", git_svn=True, quiet=True)
             exporter.export("refs/ref", "trunk")
         with open(output, "r", encoding="ascii") as output:
             self.assertMultiLineEqual("""\
@@ -139,7 +139,7 @@ git-svn-id: /trunk@2 00000000-0000-0000-0000-000000000000
         with svnex.FastExportFile(output) as fex, log:
             exporter = svnex.Exporter(dump, fex, root="",
                 rev_map={"": {1: "refs/ref"}}, ignore=("igfile", "igdir"),
-                quiet=True)
+                git_svn=True, quiet=True)
             exporter.export("refs/ref")
         with open(output, "r", encoding="ascii") as output:
             self.assertMultiLineEqual("""\
@@ -174,7 +174,7 @@ D file
         script = 'cd "$1" && git fast-import --quiet'
         importer = ("sh", "-c", script, "--", git)
         with svnex.FastExportPipe(importer) as importer, log:
-            exporter = svnex.Exporter(dump, importer, root="", quiet=True)
+            exporter = svnex.Exporter(dump, importer, root="", git_svn=True, quiet=True)
             exporter.export("refs/heads/master")
         cmd = ("git", "rev-parse", "--verify", "refs/heads/master")
         rev = subprocess.check_output(cmd, cwd=git).decode("ascii").strip()
@@ -251,7 +251,7 @@ M 755 :2 file2
         output = os.path.join(self.dir, "output")
         with svnex.FastExportFile(output) as fex, log:
             exporter = svnex.Exporter(dump, fex, root="",
-                export_copies=True, quiet=True)
+                export_copies=True, git_svn=True, quiet=True)
             exporter.export("refs/branch", "branch")
         with open(output, "r", encoding="ascii") as output:
             self.assertMultiLineEqual("""\
@@ -350,7 +350,7 @@ from trunk
         ))
         output = os.path.join(self.dir, "output")
         with svnex.FastExportFile(output) as fex, log:
-            exporter = svnex.Exporter(dump, fex, root="", quiet=True)
+            exporter = svnex.Exporter(dump, fex, root="", git_svn=True, quiet=True)
             exporter.export("refs/trunk", "trunk")
         with open(output, "r", encoding="ascii") as output:
             self.assertMultiLineEqual("""\
@@ -447,7 +447,7 @@ M 644 :1 file
         output = os.path.join(self.dir, "output")
         with svnex.FastExportFile(output) as fex, log:
             exporter = svnex.Exporter(dump, fex, root="",
-                rev_map={"/trunk": {3: "refs/trunk"}}, quiet=True)
+                rev_map={"/trunk": {3: "refs/trunk"}}, git_svn=True, quiet=True)
             exporter.export("refs/trunk", "trunk")
         with open(output, "r", encoding="ascii") as output:
             self.assertMultiLineEqual("""\
@@ -492,7 +492,7 @@ M 644 :1 file
         with svnex.FastExportFile(output) as fex, log:
             rev_map = {"trunk": {1: "trunk"}}
             exporter = svnex.Exporter(dump, fex, root="", rev_map=rev_map,
-                quiet=True)
+                git_svn=True, quiet=True)
             exporter.export("refs/branch", "branch")
         with open(output, "r", encoding="ascii") as output:
             self.assertMultiLineEqual("""\

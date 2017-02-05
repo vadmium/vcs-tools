@@ -42,6 +42,7 @@ def main(
         = None,
     rewrite_root: dict(metavar="URL",
         help="Subversion URL to store in the metadata") = "",
+    git_svn: dict(help="include git-svn-id lines") = False,
     ignore: dict(
         metavar="PATH", help="add a path to be excluded from export") = (),
     export_copies: dict(help='''export simple branch copies even when no
@@ -108,7 +109,7 @@ def main(
             author_map=author_map,
             root=rewrite_root,
             ignore=ignore,
-            export_copies=export_copies,
+            git_svn=git_svn, export_copies=export_copies,
             quiet=quiet,
         )
         exporter.export(git_ref, branch, peg_rev)
@@ -119,12 +120,13 @@ class Exporter:
         author_map=None,
         root="",
         ignore=(),
-        export_copies=False,
+        git_svn=False, export_copies=False,
         quiet=False,
     ):
         self.output = output
         self.author_map = author_map
         self.ignore = ignore
+        self.git_svn = git_svn
         self.export_copies = export_copies
         
         self.known_branches = defaultdict(lambda: (list(), list()))
@@ -329,8 +331,9 @@ class Exporter:
         
         self.output.printf("committer {} {} +0000", author, date)
         
-        log = "{}\n\ngit-svn-id: {}{}@{} {}\n".format(
-            log, self.root, path.rstrip("/"), rev, self.uuid)
+        if self.git_svn:
+            log = "{}\n\ngit-svn-id: {}{}@{} {}\n".format(
+                log, self.root, path.rstrip("/"), rev, self.uuid)
         log = log.encode("utf-8")
         self.output.printf("data {}", len(log))
         self.output.file.write(log)
