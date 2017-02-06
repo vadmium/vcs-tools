@@ -93,15 +93,23 @@ def parse_path(path):
     return tuple(path[1:].split("/"))
 
 def read_record(stream):
-    parser = email.parser.BytesFeedParser()
+    # Skip blank lines. Record bodies are supposed to be followed by a blank
+    # separator line. In addition, Node-path records tend to have one or two
+    # extra blank lines after them.
     while True:
         line = stream.readline()
-        if not line:
-            raise EOFError()
+        if line != b"\n":
+            break
+    if not line:
+        raise EOFError()
+    
+    parser = email.parser.BytesFeedParser()
+    while True:
         assert line.endswith(b"\n")
         parser.feed(line)
         if not line.rstrip(b"\r\n"):
             break
+        line = stream.readline()
     message = parser.close()
     for defect in message.defects:
         warn(f"{stream.name}: {defect!r}")

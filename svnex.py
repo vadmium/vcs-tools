@@ -240,6 +240,7 @@ class Exporter:
             else:
                 dir.delete_entry(file)
         
+        r = None
         while True:
             [header, revprops] = read_record(self.dump)
             # Tolerate concatenated dumps
@@ -248,12 +249,11 @@ class Exporter:
                 assert header.items() == [("UUID", self.uuid)]
                 [header, revprops] = read_record(self.dump)
             if "Node-path" in header:
-                line = self.dump.readline()
-                assert line == b"\n"
                 continue
-            if int(header["Revision-number"]) == rev:
+            r = int(header["Revision-number"])
+            if r >= rev:
                 break
-        else:
+        if r != rev:
             raise LookupError(f"Revision {rev} not found in dump file")
         while True:
             if not revprops.startswith(b"K "):
