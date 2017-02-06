@@ -350,10 +350,13 @@ class Exporter:
                         elif instr == TARGET:
                             offset = read_int(instr_data)
                             data = target[offset:offset + copy]
+                            # Repeat if length greater than existing target size
+                            data *= -(-copy // len(data))
+                            data = data[:copy]
                         else:
                             assert instr == NEW
                             data = delta.read(copy)
-                            assert len(data) == copy
+                        assert len(data) == copy
                         target.extend(data)
                     assert not delta.read(1)
                     [hash] = self._header.get_all("Text-content-md5")
