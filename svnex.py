@@ -333,22 +333,30 @@ class Exporter:
                     instr_data = delta.read(instr_length)
                     assert len(instr_data) == instr_length
                     instr_data = BytesIO(instr_data)
-                    [instr] = instr_data.read(1)
-                    assert not instr & 0x3F
-                    copy = read_int(instr_data)
-                    instr >>= 6
-                    SOURCE = 0
-                    NEW = 2
-                    if instr == SOURCE:
-                        offset = read_int(instr_data)
-                        assert offset == 0
-                        target = source[:copy]
-                    else:
-                        assert instr == NEW
-                        assert copy == data
-                        target = delta.read(copy)
-                        assert len(target) == copy
-                    assert not instr_data.read(1)
+                    target = bytearray()
+                    while True:
+                        instr = instr_data.read(1)
+                        if not instr:
+                            break
+                        [instr] = instr
+                        copy = instr & 0x3F
+                        instr >>= 6
+                        if not copy:
+                            copy = read_int(instr_data)
+                        SOURCE = 0
+                        TARGET = 1
+                        NEW = 2
+                        if instr == SOURCE:
+                            offset = read_int(instr_data)
+                            data = source[offset:offset + copy]
+                        elif instr == TARGET:
+                            offset = read_int(instr_data)
+                            data = target[offset:offset + copy]
+                        else:
+                            assert instr == NEW
+                            data = delta.read(copy)
+                            assert len(data) == copy
+                        target.extend(data)
                     assert not delta.read(1)
                     [hash] = self._header.get_all("Text-content-md5")
                     assert md5(target).hexdigest() == hash
