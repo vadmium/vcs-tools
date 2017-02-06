@@ -295,46 +295,60 @@ class Exporter:
             assert frozenset(self._header.keys()) < {
                 "Node-path", "Node-kind", "Node-action",
                 "Node-copyfrom-path", "Node-copyfrom-rev", "Prop-delta",
-                "Text-delta", "Text-content-md5",
+                "Text-delta", "Text-delta-base-md5", "Text-content-md5",
                 "Prop-content-length", "Text-content-length",
                 "Content-length",
             }
-            assert frozenset(self._header.items()) \
-                > {("Node-action", "add"), ("Prop-delta", "true")}
-            assert (action, from_path, from_rev) == ("A", None, None)
+            assert action == {"add": "A", "change": "M"}[self._header.get("Node-action")]
+            assert from_path is from_rev is None
             [kind] = self._header.get_all("Node-kind")
             if kind == "dir":
+                assert action == "A"
                 if not self.quiet:
                     stderr.writelines(("\n  A ", p, "/"))
             else:
                 assert kind == "file"
                 if not self.quiet:
-                    stderr.writelines(("\n  A ", p))
+                    stderr.write(f"\n  {action} {p}")
                 p = p[len(prefix):]
-                [target] = self._header.get_all("Prop-content-length")
+                [target] = self._header.get_all("Prop-content-length", (0,))
                 target = self._content[int(target):]
                 if self._header.get("Text-delta") == "true":
+                    if action == "M":
+                        [source, mode] = self.output[p]
+                        source = self.output.cat_blob(source)
+                        [hash] = self._header.get_all("Text-delta-base-md5")
+                        assert md5(source).hexdigest() == hash
+                    else:
+                        source = None
                     delta = BytesIO(target)
                     header = delta.read(4)
                     assert header == b"SVN\x00"
                     source_offset = read_int(delta)
                     assert source_offset == 0
                     source_length = read_int(delta)
-                    assert source_length == 0
                     target = read_int(delta)
                     instr_length = read_int(delta)
                     data = read_int(delta)
-                    assert data == target
                     instr_data = delta.read(instr_length)
                     assert len(instr_data) == instr_length
                     instr_data = BytesIO(instr_data)
                     [instr] = instr_data.read(1)
-                    assert instr == 2 << 6
+                    assert not instr & 0x3F
                     copy = read_int(instr_data)
-                    assert copy == data
+                    instr >>= 6
+                    SOURCE = 0
+                    NEW = 2
+                    if instr == SOURCE:
+                        offset = read_int(instr_data)
+                        assert offset == 0
+                        target = source[:copy]
+                    else:
+                        assert instr == NEW
+                        assert copy == data
+                        target = delta.read(copy)
+                        assert len(target) == copy
                     assert not instr_data.read(1)
-                    target = delta.read(copy)
-                    assert len(target) == copy
                     assert not delta.read(1)
                     [hash] = self._header.get_all("Text-content-md5")
                     assert md5(target).hexdigest() == hash
@@ -701,12 +715,6 @@ class DirEditor:
             stderr.flush()
         return self
     
-    def open_file(self, path, base):
-        if not self.rev.quiet:
-            stderr.writelines(("\n  M ", path))
-            stderr.flush()
-        return FileEditor(path, self.rev, original=self.rev.output[path])
-    
     def delete_entry(self, path, rev=None):
         if not self.rev.quiet:
             stderr.writelines(("\n  D ", path))
@@ -732,15 +740,6 @@ class FileEditor:
                 self.mode = "755"
             else:
                 self.mode = "644"
-
-class DeltaWindowHandler(object):
-    def __init__(self, file):
-        self.file = file
-        if self.file.blob:
-            self.sbuf = self.file.rev.output.cat_blob(self.file.blob)
-        else:
-            self.sbuf = bytes()
-        self.target_buf = bytearray()
 
 def read_int(stream):
     i = 0
