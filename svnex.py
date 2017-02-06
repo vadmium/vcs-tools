@@ -163,6 +163,7 @@ class Exporter:
         [header, content] = read_record(dump)
         [[field, self.uuid]] = header.items()
         assert field == "UUID"
+        self._header = None
     
     def export(self, git_ref, branch="", rev=None):
         self.git_ref = git_ref
@@ -227,9 +228,9 @@ class Exporter:
     def commit(self, rev, date, author, *,
     init_export, base_rev, base_path, gitrev, path, prefix):
         self.log(":")
-        editor = RevEditor(self.output, self.quiet)
+        edits = list()
+        mergeinfo = dict()
         
-        dir = DirEditor(editor)
         for (file, (action, _, _)) in self.paths.items():
             if not file.startswith(prefix) or action not in "DR":
                 continue
@@ -242,12 +243,16 @@ class Exporter:
         
         r = None
         while True:
-            [header, revprops] = read_record(self.dump)
+            if self._header is None:
+                [header, self._content] = read_record(self.dump)
+            else:
+                header = self._header
+                self._header = None
             # Tolerate concatenated dumps
             if header.items() == [("SVN-fs-dump-format-version", "3")]:
                 [header, content] = read_record(self.dump)
                 assert header.items() == [("UUID", self.uuid)]
-                [header, revprops] = read_record(self.dump)
+                [header, self._content] = read_record(self.dump)
             if "Node-path" in header:
                 continue
             r = int(header["Revision-number"])
@@ -255,6 +260,7 @@ class Exporter:
                 break
         if r != rev:
             raise LookupError(f"Revision {rev} not found in dump file")
+        revprops = self._content
         while True:
             if not revprops.startswith(b"K "):
                 break
@@ -274,25 +280,45 @@ class Exporter:
             reporter.set_path(p, INVALID_REVNUM, True, None,
                 subvertpy.ra.DEPTH_EXCLUDE)
         
-        root = None
-        for p in self.paths:
-            if p.text.startswith(prefix):
+        while True:
+            [self._header, self._content] = read_record(self.dump)
+            p = self._header.get_all("Node-path")
+            if not p:
                 break
-            if p.text == path:
-                assert root is None
-                root = p
-        else:
-            if root is not None:
-                attrib = root.attrib
-                kind = attrib.pop("kind")
-                assert kind in {"dir", ""}
-                assert attrib == {"action": "A"}
-                # TODO: what if directory added with properties?
-                self.log(" created root only")
-                return None
+            
+            [p] = p
+            p = "/" + p
+            [action, from_path, from_rev] = self.paths.pop(p)
+            if not p.startswith(prefix) and p != path:
+                continue
+            assert frozenset(self._header.keys()) < {
+                "Node-path", "Node-kind", "Node-action",
+                "Node-copyfrom-path", "Node-copyfrom-rev", "Prop-delta",
+                "Text-delta", "Text-content-md5",
+                "Prop-content-length", "Text-content-length",
+                "Content-length",
+            }
+            assert frozenset(self._header.items()) \
+                > {("Node-action", "add"), ("Prop-delta", "true")}
+            assert (action, from_path, from_rev) == ("A", None, None)
+            [kind] = self._header.get_all("Node-kind")
+            if kind == "dir":
+                if not self.quiet:
+                    stderr.writelines(("\n  A ", p, "/"))
+            else:
+                assert kind == "file"
+                if not self.quiet:
+                    stderr.writelines(("\n  A ", p))
+                self.output[p] = (None, "644")
+                edits.append(f"M 644 None {p[len(prefix):]}")
+            stderr.flush()
+        if not edits:
+            self.log("\n  => commit skipped")
+            return None
+        assert not self.paths
         
         merges = list()
-        if editor.mergeinfo:
+        if mergeinfo:
             self.log("\n")
             basehist = Ancestors(self)
             if base_rev:
@@ -300,7 +326,7 @@ class Exporter:
             merged = RevisionSet()
             ancestors = Ancestors(self)
             merged.update(basehist)
-            mergeinfo = editor.mergeinfo.items()
+            mergeinfo = mergeinfo.items()
             for (branch, ranges) in mergeinfo:
                 for (start, end, _) in ranges:
                     merged.add_segment(branch, start, end)
@@ -344,7 +370,7 @@ class Exporter:
         for ancestor in merges:
             self.output.printf("merge {}", ancestor)
         
-        for line in editor.edits:
+        for line in edits:
             self.output.printf("{}", line)
         self.output.printf("")
         
@@ -434,7 +460,11 @@ def ExportRevs(exporter, path, base, end):
                 author = "(no author)"
             else:
                 author = author.text
-            yield (rev, entry.find("date").text, author, paths)
+            path_map = dict()
+            for p in paths:
+                path_map[p.text] = (p.get("action"),
+                    p.get("copyfrom-path"), p.get("copyfrom-rev"))
+            yield (rev, entry.find("date").text, author, path_map)
 
 class RevisionSet:
     def __init__(self):
@@ -634,47 +664,12 @@ class FastExportPipe(FastExport):
         self.proc.stdout.readline()
         return data
 
-class Editor(object):
-    def close(self):
-        pass
-
-class RevEditor(Editor):
-    def __init__(self, output, quiet):
-        self.output = output
-        self.quiet = quiet
-        self.edits = list()
-        self.mergeinfo = dict()
-    
-    def set_target_revision(self, rev):
-        pass
-    def open_root(self, base):
-        return RootEditor(self)
-    def abort(self):
-        pass
-
-class NodeEditor(Editor):
-    def __init__(self, rev):
-        self.rev = rev
-    def change_prop(self, name, value):
-        pass
-
-class DirEditor(NodeEditor):
-    def add_directory(self, path):
-        if not self.rev.quiet:
-            stderr.writelines(("\n  A ", path, "/"))
-            stderr.flush()
-        return self
+class DirEditor:
     def open_directory(self, path, base):
         if not self.rev.quiet:
             stderr.writelines(("\n  M ", path, "/"))
             stderr.flush()
         return self
-    
-    def add_file(self, path):
-        if not self.rev.quiet:
-            stderr.writelines(("\n  A ", path))
-            stderr.flush()
-        return FileEditor(path, self.rev)
     
     def open_file(self, path, base):
         if not self.rev.quiet:
@@ -700,7 +695,7 @@ class RootEditor(DirEditor):
                 if inhranges:
                     self.rev.mergeinfo[path] = inhranges
 
-class FileEditor(NodeEditor):
+class FileEditor:
     def __init__(self, path, rev, original=(None, "644")):
         NodeEditor.__init__(self, rev)
         self.path = path
@@ -715,10 +710,6 @@ class FileEditor(NodeEditor):
     
     def apply_textdelta(self, base_sum):
         return DeltaWindowHandler(self)
-    
-    def close(self):
-        self.rev.output[self.path] = (self.blob, self.mode)
-        self.rev.edits.append("M {0.mode} {0.blob} {0.path}".format(self))
 
 class DeltaWindowHandler(object):
     def __init__(self, file):
