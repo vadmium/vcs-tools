@@ -9,7 +9,6 @@ from subprocess import Popen
 from email.message import Message
 from io import BytesIO, TextIOWrapper
 from email.generator import BytesGenerator
-#~ import subvertpy.delta
 from functools import partial
 from unittest.mock import patch
 import sys
@@ -195,61 +194,6 @@ git-svn-id: @2 00000000-0000-0000-0000-000000000000
  2 files changed, 2 insertions(+)
 ''',
             log)
-    
-    def test_executable(self):
-        """Order of setting file mode and contents should not matter"""
-        with patch("svnex.RemoteAccess", ExecutableRa):
-            output = os.path.join(self.dir, "output")
-            stdin = BytesIO(b'<log><logentry revision="100"/></log>')
-            dump = BytesIO(b"SVN-fs-dump-format-version: 3\n\nUUID:\n\n")
-            with svnex.FastExportFile(output) as fex, \
-                    patch("svnex.stdin", TextIOWrapper(stdin, "ascii")):
-                exporter = svnex.Exporter(dump, fex, quiet=True)
-                exporter.export("refs/ref")
-            with open(output, "r", encoding="ascii") as output:
-                self.assertMultiLineEqual("""\
-blob
-mark :1
-data 0
-
-blob
-mark :2
-data 0
-
-commit refs/ref
-mark :3
-committer (no author) <(no author)@00000000-0000-0000-0000-000000000000> 0 +0000
-data 66
-
-
-git-svn-id: file:///repo@1 00000000-0000-0000-0000-000000000000
-
-M 755 :1 file1
-M 755 :2 file2
-
-blob
-mark :1
-data 8
-content
-
-blob
-mark :2
-data 8
-content
-
-commit refs/ref
-mark :4
-committer (no author) <(no author)@00000000-0000-0000-0000-000000000000> 0 +0000
-data 66
-
-
-git-svn-id: file:///repo@2 00000000-0000-0000-0000-000000000000
-
-M 755 :1 file1
-M 755 :2 file2
-
-""",
-                    output.read())
     
     def test_export_copies(self):
         """Test the "--export-copies" mode"""
@@ -532,94 +476,6 @@ M 644 :1 file
 
 """,
                 output.read())
-
-def executable_add(editor):
-    root = editor.open_root(0)
-    
-    file = root.add_file("file1")
-    delta = file.apply_textdelta(None)
-    subvertpy.delta.send_stream(BytesIO(b""), delta)
-    file.change_prop("svn:executable", "*")
-    file.close()
-    
-    file = root.add_file("file2")
-    file.change_prop("svn:executable", "*")
-    delta = file.apply_textdelta(None)
-    subvertpy.delta.send_stream(BytesIO(b""), delta)
-    file.close()
-    
-    root.close()
-    editor.close()
-
-def executable_modify(editor):
-    root = editor.open_root(1)
-    
-    file = root.open_file("file1", 1)
-    delta = file.apply_textdelta(None)
-    subvertpy.delta.send_stream(BytesIO(b"content\n"), delta)
-    file.close()
-    
-    file = root.open_file("file2", 1)
-    delta = file.apply_textdelta(None)
-    subvertpy.delta.send_stream(BytesIO(b"content\n"), delta)
-    file.close()
-    
-    root.close()
-    editor.close()
-
-class ExecutableRa:
-    revs = (
-        dict(
-            changes={"/file": ("A", None, None)},
-            diff=executable_add,
-        ),
-        dict(
-            changes={"/file": ("M", None, None)},
-            diff=executable_modify,
-        ),
-    )
-    revprops = {
-        "svn:date": "1970-01-01T00:00:00.000000Z",
-        "svn:log": "",
-    }
-    
-    def __init__(self, url, *pos, **kw):
-        self.url = url
-    
-    def get_repos_root(self):
-        return self.url
-    def get_uuid(self):
-        return "00000000-0000-0000-0000-000000000000"
-    def get_latest_revnum(self):
-        return len(self.revs)
-    def reparent(self, *pos):
-        pass
-    
-    def iter_log(self, *pos, **kw):
-        revnum = len(self.revs)
-        for rev in reversed(self.revs):
-            changes = dict()
-            for (path, value) in rev["changes"].items():
-                changes[path] = value + (None,)
-            yield (changes, revnum, self.revprops, False)
-            revnum -= 1
-    
-    def get_location_segments(self, path, peg, start, end, rcvr):
-        rcvr(0, 2, "")
-    
-    def get_log(self, callback, paths, start, *pos, **kw):
-        changes = self.revs[start - 1]["changes"]
-        callback(changes, start, self.revprops, False)
-    
-    def do_diff(self, targetrev, path, targeturl, editor, *pos):
-        diff = self.revs[targetrev - 1]["diff"]
-        return ExecutableReporter(partial(diff, editor))
-
-class ExecutableReporter:
-    def __init__(self, diff):
-        self.finish = diff
-    def set_path(self, *pos):
-        pass
 
 class TestAuthorsFile(TempDirTest):
     """Parsing authors file"""

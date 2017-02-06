@@ -3,7 +3,6 @@
 '''See main() function'''
 
 #~ from subvertpy.properties import (
-    #~ PROP_EXECUTABLE,
     #~ PROP_MERGEINFO,
 #~ )
 from sys import stderr, exc_info, stdin
@@ -261,21 +260,10 @@ class Exporter:
                 break
         if r != rev:
             raise LookupError(f"Revision {rev} not found in dump file")
-        revprops = self._content
-        while True:
-            if not revprops.startswith(b"K "):
-                break
-            [length, revprops] = revprops[2:].split(b"\n", 1)
-            length = int(length)
-            name = revprops[:length]
-            assert revprops.startswith(b"\nV ", length)
-            [length, revprops] = revprops[length + 3:].split(b"\n", 1)
-            length = int(length)
-            if name == b"svn:log":
-                log = revprops[:length].decode("ascii")
-            assert revprops.startswith(b"\n", length)
-            revprops = revprops[length + 1:]
-        assert revprops == b"PROPS-END\n"
+        [revprops, text] = parse_content(header, self._content)
+        assert revprops.keys() >= {b"svn:date", b"svn:log"}
+        assert revprops.keys() <= {b"svn:author", b"svn:date", b"svn:log"}
+        log = revprops[b"svn:log"]
         
         for p in self.ignore:
             reporter.set_path(p, INVALID_REVNUM, True, None,
@@ -311,11 +299,21 @@ class Exporter:
                 if not self.quiet:
                     stderr.write(f"\n  {action} {p}")
                 p = p[len(prefix):]
-                [target] = self._header.get_all("Prop-content-length", (0,))
-                target = self._content[int(target):]
+                [props, target] = parse_content(self._header, self._content)
+                if action == "M":
+                    [source, mode] = self.output[p]
+                else:
+                    assert props.items() >= {(b"svn:eol-style", "native"),
+                        (b"svn:keywords", "Author Date Id Revision")}
+                    assert props.items() <= {
+                        (b"svn:eol-style", "native"),
+                        (b"svn:executable", "*"),
+                        (b"svn:keywords", "Author Date Id Revision")
+                    }
+                    mode = props.get(b"svn:executable")
+                    mode = {None: "644", "*": "755"}[mode]
                 if self._header.get("Text-delta") == "true":
                     if action == "M":
-                        [source, mode] = self.output[p]
                         source = self.output.cat_blob(source)
                         [hash] = self._header.get_all("Text-delta-base-md5")
                         assert md5(source).hexdigest() == hash
@@ -361,8 +359,8 @@ class Exporter:
                     [hash] = self._header.get_all("Text-content-md5")
                     assert md5(target).hexdigest() == hash
                 blob = self.output.blob(p, target)
-                self.output[p] = (blob, "644")
-                edits.append(f"M 644 {blob} {p}")
+                self.output[p] = (blob, mode)
+                edits.append(f"M {mode} {blob} {p}")
             stderr.flush()
         if not edits:
             self.log("\n  => commit skipped")
@@ -741,14 +739,6 @@ class RootEditor(DirEditor):
                 if inhranges:
                     self.rev.mergeinfo[path] = inhranges
 
-class FileEditor:
-    def change_prop(self, name, value):
-        if name == PROP_EXECUTABLE:
-            if value:
-                self.mode = "755"
-            else:
-                self.mode = "644"
-
 def read_int(stream):
     i = 0
     while True:
@@ -774,6 +764,39 @@ class FileArray(object):
     def __repr__(self):
         return "{}({}, {}, {})".format(type(self).__name__,
             self.file, self.pos, self.len)
+
+def parse_content(header, content):
+    props = dict()
+    props_length = header.get_all("Prop-content-length")
+    if props_length:
+        [props_length] = props_length
+        props_data = BytesIO(content[:int(props_length)])
+        content = content[int(props_length):]
+        for line in iter(props_data.readline, b"PROPS-END\n"):
+            assert line.endswith(b"\n")
+            assert line.startswith(b"K ")
+            length = int(line[2:-1])
+            name = props_data.read(length)
+            assert len(name) == length
+            line = props_data.read(1)
+            assert line == b"\n"
+            line = props_data.readline()
+            assert line.endswith(b"\n")
+            assert line.startswith(b"V ")
+            length = int(line[2:-1])
+            value = props_data.read(length)
+            assert len(value) == length
+            props[name] = value.decode("ascii")
+            line = props_data.read(1)
+            assert line == b"\n"
+    length = header.get_all("Text-content-length")
+    if length is None:
+        assert not content
+        content = None
+    else:
+        [length] = length
+        assert len(content) == int(length)
+    return (props, content)
 
 @contextmanager
 def progresscontext(*args):
