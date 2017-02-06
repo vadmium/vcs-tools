@@ -2,7 +2,6 @@
 
 '''See main() function'''
 
-#~ from subvertpy.delta import apply_txdelta_window
 #~ from subvertpy.properties import (
     #~ PROP_EXECUTABLE,
     #~ PROP_MERGEINFO,
@@ -22,6 +21,8 @@ from misc import Context
 from xml.etree import ElementTree
 from _common import parse_path, read_record
 from datetime import datetime, timezone
+from io import BytesIO
+from hashlib import md5
 
 def main(
     dump: dict(help="Subversion dump filename"),
@@ -309,8 +310,37 @@ class Exporter:
                 assert kind == "file"
                 if not self.quiet:
                     stderr.writelines(("\n  A ", p))
-                self.output[p] = (None, "644")
-                edits.append(f"M 644 None {p[len(prefix):]}")
+                p = p[len(prefix):]
+                [target] = self._header.get_all("Prop-content-length")
+                target = self._content[int(target):]
+                if self._header.get("Text-delta") == "true":
+                    delta = BytesIO(target)
+                    header = delta.read(4)
+                    assert header == b"SVN\x00"
+                    source_offset = read_int(delta)
+                    assert source_offset == 0
+                    source_length = read_int(delta)
+                    assert source_length == 0
+                    target = read_int(delta)
+                    instr_length = read_int(delta)
+                    data = read_int(delta)
+                    assert data == target
+                    instr_data = delta.read(instr_length)
+                    assert len(instr_data) == instr_length
+                    instr_data = BytesIO(instr_data)
+                    [instr] = instr_data.read(1)
+                    assert instr == 2 << 6
+                    copy = read_int(instr_data)
+                    assert copy == data
+                    assert not instr_data.read(1)
+                    target = delta.read(copy)
+                    assert len(target) == copy
+                    assert not delta.read(1)
+                    [hash] = self._header.get_all("Text-content-md5")
+                    assert md5(target).hexdigest() == hash
+                blob = self.output.blob(p, target)
+                self.output[p] = (blob, "644")
+                edits.append(f"M 644 {blob} {p}")
             stderr.flush()
         if not edits:
             self.log("\n  => commit skipped")
@@ -696,20 +726,12 @@ class RootEditor(DirEditor):
                     self.rev.mergeinfo[path] = inhranges
 
 class FileEditor:
-    def __init__(self, path, rev, original=(None, "644")):
-        NodeEditor.__init__(self, rev)
-        self.path = path
-        (self.blob, self.mode) = original
-    
     def change_prop(self, name, value):
         if name == PROP_EXECUTABLE:
             if value:
                 self.mode = "755"
             else:
                 self.mode = "644"
-    
-    def apply_textdelta(self, base_sum):
-        return DeltaWindowHandler(self)
 
 class DeltaWindowHandler(object):
     def __init__(self, file):
@@ -719,14 +741,14 @@ class DeltaWindowHandler(object):
         else:
             self.sbuf = bytes()
         self.target_buf = bytearray()
-    
-    def __call__(self, chunk):
-        if chunk is None:
-            self.file.blob = self.file.rev.output.blob(self.file.path,
-                self.target_buf)
-        else:
-            chunk = apply_txdelta_window(self.sbuf, chunk)
-            self.target_buf.extend(chunk)
+
+def read_int(stream):
+    i = 0
+    while True:
+        [byte] = stream.read(1)
+        i = i << 7 | byte & 0x7F
+        if not byte & 0x80:
+            return i
 
 class FileArray(object):
     def __init__(self, file, pos, len):
