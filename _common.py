@@ -1,50 +1,55 @@
 from signal import signal, SIGINT, SIGPIPE, SIG_DFL
 from os import kill, getpid
-from argparse import ArgumentParser
+from argparse import ArgumentParser, RawDescriptionHelpFormatter
 from inspect import signature, Parameter
 from clifunc import splitdoc
 
 def run_cli(main):
     try:
-        [summary, _] = splitdoc(main.__doc__)
-        parser = ArgumentParser(description=summary)
+        [summary, details] = splitdoc(main.__doc__)
+        parser = ArgumentParser(formatter_class=RawDescriptionHelpFormatter,
+            description=summary, epilog=details)
         
         groups = dict()
         paired = set()
+        pos = None
         for param in signature(main).parameters.values():
             attrs = param.annotation
             if attrs is Parameter.empty:
                 attrs = dict()
-            default = param.default
-            if param.kind == Parameter.POSITIONAL_OR_KEYWORD:
-                name = param.name
-                short = ()
-            else:
-                assert param.kind == Parameter.KEYWORD_ONLY
+            kw = dict(default=param.default)
+            if param.kind == Parameter.KEYWORD_ONLY:
                 name = "--" + param.name
                 short = attrs.pop("short", None)
                 if short is None:
                     short = ()
                 else:
                     short = (short,)
-                if default is Parameter.empty:
+                if kw["default"] is Parameter.empty:
                     attrs.setdefault("required", True)
-            if param.kind == Parameter.KEYWORD_ONLY and default is False:
-                action = "store_true"
             else:
-                action = "store"
-                if isinstance(default, int):
+                name = param.name
+                short = ()
+                if param.kind == Parameter.VAR_POSITIONAL:
+                    pos = param.name
+                    attrs.setdefault("nargs", "*")
+                else:
+                    assert param.kind == Parameter.POSITIONAL_OR_KEYWORD
+            if param.kind == Parameter.KEYWORD_ONLY \
+                    and kw["default"] is False:
+                kw.update(action="store_true")
+            else:
+                if isinstance(kw["default"], int):
                     assert param.kind == Parameter.KEYWORD_ONLY
                     attrs.setdefault("type", int)
-                elif isinstance(default, (list, tuple, set, frozenset)) \
-                        and not default:
+                elif isinstance(kw["default"],
+                        (list, tuple, set, frozenset)) and not kw["default"]:
                     if param.kind == Parameter.KEYWORD_ONLY:
-                        action = "append"
-                        default = list()
+                        kw.update(action="append", default=list())
                     else:
                         attrs.setdefault("nargs", "*")
-                elif default is Parameter.empty:
-                    default = None
+                elif kw["default"] is Parameter.empty:
+                    del kw["default"]
                 else:
                     assert param.kind == Parameter.KEYWORD_ONLY
             
@@ -62,12 +67,15 @@ def run_cli(main):
                     groups[group_id] = group
             
             name = name.replace("_", "-")
-            group.add_argument(*short, name,
-                action=action, default=default, **attrs)
+            group.add_argument(*short, name, **kw, **attrs)
         assert paired == groups.keys()
         
-        args = parser.parse_args()
-        main(**vars(args))
+        args = dict(vars(parser.parse_args()))
+        if pos is None:
+            pos = ()
+        else:
+            pos = args.pop(pos)
+        main(*pos, **args)
     except KeyboardInterrupt:
         signal(SIGINT, SIG_DFL)
         kill(getpid(), SIGINT)

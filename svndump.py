@@ -6,7 +6,11 @@ from contextlib import ExitStack
 import email.parser, email.message, email.generator
 from warnings import warn
 
-def main(*inputs, log=None):
+def main(
+    *inputs:
+        dict(metavar="input", help="input dump streams (default: stdin)"),
+    log: dict(short="-l", help="input log stream") = None,
+):
     """Merge dumps of different parts of a Subversion repository
 
     Multiple dump streams may be concatenated into a single input stream if
@@ -115,15 +119,5 @@ def write_message_fields(file, headers):
     email.generator.BytesGenerator(file, mangle_from_=False).flatten(msg)
 
 if __name__ == "__main__":
-    from argparse import ArgumentParser, RawDescriptionHelpFormatter
-    from clifunc import splitdoc
-    from inspect import getdoc
-    
-    [summary, details] = splitdoc(getdoc(main))
-    parser = ArgumentParser(formatter_class=RawDescriptionHelpFormatter,
-        description=summary, epilog=details)
-    parser.add_argument("input", nargs="*",
-        help="input dump streams (default: stdin)")
-    parser.add_argument("-l", "--log", help="input log stream")
-    args = parser.parse_args()
-    main(*args.input, log=args.log)
+    from _common import run_cli
+    run_cli(main)
