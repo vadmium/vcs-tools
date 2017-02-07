@@ -3,8 +3,9 @@
 import svnlog
 from sys import stdin, stdout
 from contextlib import ExitStack
-import email.parser, email.message, email.generator
+import email.message, email.generator
 from warnings import warn
+from _common import read_message_header
 
 def main(
     *inputs:
@@ -99,18 +100,6 @@ def main(
                 mangle_from_=False)
             generator.flatten(out_record)
             stdout.buffer.write(out_content)
-
-def read_message_header(stream):
-    parser = email.parser.BytesFeedParser()
-    while True:
-        line = stream.readline()
-        parser.feed(line)
-        if not line.rstrip(b"\r\n"):
-            break
-    message = parser.close()
-    for defect in message.defects:
-        warn(f"{stream.name}: {defect!r}\n")
-    return message
 
 def write_message_fields(file, headers):
     msg = email.message.Message()

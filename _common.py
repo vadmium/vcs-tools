@@ -3,6 +3,8 @@ from os import kill, getpid
 from argparse import ArgumentParser, RawDescriptionHelpFormatter
 from inspect import signature, Parameter
 from clifunc import splitdoc
+import email.parser
+from warnings import warn
 
 def run_cli(main):
     try:
@@ -89,3 +91,15 @@ def parse_path(path):
     assert path.startswith("/")
     assert not path.endswith("/")
     return tuple(path[1:].split("/"))
+
+def read_message_header(stream):
+    parser = email.parser.BytesFeedParser()
+    while True:
+        line = stream.readline()
+        parser.feed(line)
+        if not line.rstrip(b"\r\n"):
+            break
+    message = parser.close()
+    for defect in message.defects:
+        warn(f"{stream.name}: {defect!r}\n")
+    return message
