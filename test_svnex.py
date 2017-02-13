@@ -176,9 +176,25 @@ D file
         with svnex.FastExportPipe(importer) as importer, log:
             exporter = svnex.Exporter(dump, importer, root="", git_svn=True, quiet=True)
             exporter.export("refs/heads/master")
-        cmd = ("git", "rev-parse", "--verify", "refs/heads/master")
-        rev = subprocess.check_output(cmd, cwd=git).decode("ascii").strip()
-        self.assertEqual("82aeb20279a1269f048243a603b141ee0ea204e9", rev)
+        cmd = ("git", "log", "--reverse",
+            "--format=format:%H%n%B", "--shortstat", "refs/heads/master")
+        log = subprocess.check_output(cmd, cwd=git).decode("ascii")
+        self.assertMultiLineEqual('''\
+3047a82f20bef2648a67a90912d8d755353d9e9e
+
+
+git-svn-id: @1 00000000-0000-0000-0000-000000000000
+
+ 2 files changed, 0 insertions(+), 0 deletions(-)
+
+82aeb20279a1269f048243a603b141ee0ea204e9
+
+
+git-svn-id: @2 00000000-0000-0000-0000-000000000000
+
+ 2 files changed, 2 insertions(+)
+''',
+            log)
     
     def test_executable(self):
         """Order of setting file mode and contents should not matter"""
