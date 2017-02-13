@@ -617,10 +617,9 @@ class TestAuthorsFile(TempDirTest):
             )
         
         output = os.path.join(self.dir, "output")
-        argv = ["svn-fex", "--git-ref", "refs/ref", "--authors", authors,
-            "--file", output, "file:///dummy"]
-        with patch("sys.argv", argv), patch("svnex.Exporter", self.Exporter):
-            svnex.main()
+        with patch("svnex.Exporter", self.Exporter):
+            svnex.main("file:///dummy",
+                file=output, git_ref="refs/ref", authors_file=authors)
         
         self.assertEqual(dict(
             user="Some Body <whoever@where.ever>",
