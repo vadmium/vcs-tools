@@ -660,7 +660,7 @@ def dump_message(file, headers, props=None, content=None):
         payload = payload.getvalue()
         msg["Content-length"] = format(len(payload))
         
-        # Workaround for Python issue 18324, "set_payload doe snot handle
+        # Workaround for Python issue 18324, "set_payload does not handle
         # binary payloads correctly", http://bugs.python.org/issue18324
         msg.set_payload(payload.decode("ascii", "surrogateescape"))
     
